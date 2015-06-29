@@ -250,11 +250,19 @@ sub merge_fastq_files {
         $merge_counter++;
         my $merged_filename1 = "$output_dir/merged.$merge_counter.R1.fastq";
         my $merged_filename2 = "$output_dir/merged.$merge_counter.R2.fastq";
-        system("cat ".join(" ", @$files1)." > $merged_filename1");
+        my $command = ["cat", @$files1, ">", $merged_filename1];
+        my ($ok, $err, $full_buff, $stdout_buff, $stderr_buff) = run(command => $command);
+        if (!$ok) {
+            die "ERROR while running cat: $err\n";
+        }
         if (!-e $merged_filename1) {
             die "Cannot create merged file ($merged_filename1) in the output directory ($output_dir)\n";
         }
-        system("cat ".join(" ", @$files2)." > $merged_filename2");
+        $command = ["cat", @$files2, ">", $merged_filename2];
+        ($ok, $err, $full_buff, $stdout_buff, $stderr_buff) = run(command => $command);
+        if (!$ok) {
+            die "ERROR while running cat: $err\n";
+        }
         if (!-e $merged_filename2) {
             die "Cannot create merged file ($merged_filename2) in the output directory ($output_dir)\n";
         }
