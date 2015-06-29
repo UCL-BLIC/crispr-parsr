@@ -218,6 +218,7 @@ print "TOTAL: $total\n";
 
 my $wt = $exceptions->{"OK:WILD-TYPE"};
 
+my @top_sequences;
 if ($ref_seq_file) {
     open(REF, $ref_seq_file) or die;
     my $ref_seq;
@@ -238,13 +239,16 @@ if ($ref_seq_file) {
     $min_from -= 21;
     $max_to += 19;
     print "\n";
-    print substr($ref_seq, $min_from, $max_to-$min_from), "\t$wt\t0\tWILD-TYPE\n";
+    push(@top_sequences, sprintf("%s %7d %3s %10s", substr($ref_seq, $min_from, $max_to-$min_from), $wt, "0", "WILD-TYPE"));
     foreach my $this_line (@lines) {
         my ($num, $del_length, $from) = $this_line =~ /(\d+)\s(\d+)\s(\d+)/;
-        print substr($ref_seq, $min_from, $from-$min_from-1), '-'x$del_length, substr($ref_seq, ($from+$del_length-1), $max_to - ($from+$del_length-1)), "\t", join("\t", $num, $del_length, $from), "\n";
+        my $seq = substr($ref_seq, $min_from, $from-$min_from-1) . '-'x$del_length . substr($ref_seq, ($from+$del_length-1), $max_to - ($from+$del_length-1));
+        push(@top_sequences, sprintf("%s %7d %3s %10s", $seq, $num, $del_length, $from));
     }
+    print join("\n", @top_sequences), "\n";
 }
 
+my $num = @top_sequences;
 
 open(R, "|R --vanilla --slave") or die;
 
@@ -256,31 +260,80 @@ data <- subset(data, deletion_length > 0)
 del = dim(data)[1]
 wt = $wt
 
-pdf('$output_R_file')
-if (del > 3) {
-    sub = paste0('$label (', del, ' deletions / $wt wild-type = ', format(100*del/(del+wt), digits=3),'%)')
-
+plot.deletion.sizes <- function(data, sub) {
     h = hist(data[,1], breaks=(min(data[,1])-1):max(data[,1]), plot=F);
-    plot(h\$counts, xlim=c(min(h\$breaks)+1,max(h\$breaks)), type='n', main='Histogram of Deletion sizes', sub=sub, xlab='Deletion size', ylab='counts');
+    plot(h\$counts, xlim=c(min(h\$breaks)+1,max(h\$breaks)), type='n',
+        main=paste0('Histogram of Deletion sizes (', '$label', ')'),
+        sub=sub, xlab='Deletion size', ylab='counts');
     rect(h\$mids, 0, h\$mids+1, h\$counts, col='red')
+}
 
+plot.deletion.locations <- function(data, sub) {
     h = hist(data[,4], breaks=(min(data[,4])-1):(max(data[,4])+1), plot=F);
-    plot(h\$counts, xlim=c(min(h\$breaks)+1,max(h\$breaks)), type='n', main='Midpoint location of the deletion', sub=sub, xlab='Location', ylab='counts');
+    plot(h\$counts, xlim=c(min(h\$breaks)+1,max(h\$breaks)), type='n',
+        main=paste0('Midpoint location of the deletion (', '$label', ')'),
+        sub=sub, xlab='Location', ylab='counts');
     rect(h\$mids, 0, h\$mids+1, h\$counts, col='blue')
+}
 
+plot.deletion.frequencies <- function(data, sub) {
     range = data.frame(from=data[,2], to=data[,3])
     del <- vector(mode='numeric', length=max(data[,3]))
     for (i in 1:dim(range)[1]) { for (p in range[i,1]:range[i,2]) { del[p] <- del[p]+1 } }
-    plot(del, xlim=c(min(range\$from-1),max(range\$to)+1), type='n', main='Frequency of deletion per bp', sub=sub, xlab='Location', ylab='counts')
-    rect(min(range\$from):max(range\$to)-0.5, 0, min(range\$from):max(range\$to)+0.5, del[min(range\$from):max(range\$to)], col='lightblue', border='white')
-    lines(min(range\$from):max(range\$to)-0.5, del[min(range\$from):max(range\$to)], type='s', col='black')
+    plot(del, xlim=c(min(range\$from-1),max(range\$to)+1), type='n',
+        main=paste0('Frequency of deletion per bp (', '$label', ')'),
+        sub=sub, xlab='Location', ylab='counts')
+    rect(min(range\$from):max(range\$to)-0.5, 0, min(range\$from):max(range\$to)+0.5,
+        del[min(range\$from):max(range\$to)], col='lightblue', border='white')
+    lines(min(range\$from):max(range\$to)-0.5,
+        del[min(range\$from):max(range\$to)], type='s', col='black')
+}
 
-    smoothScatter(data[,4], data[,1], main='Scatter plot of Deletions sizes vs Midpoint location' , sub=sub, xlab='Location', ylab='Deletion size');
-} else {
+plot.deletion.scatter <- function(data, sub) {
+    smoothScatter(data[,4], data[,1],
+        main=paste0('Scatter plot of Deletions sizes vs Midpoint location (', '$label', ')'),
+        sub=sub, xlab='Location', ylab='Deletion size');
+}
+
+plot.deletion.topseqs <- function(data, sub) {
+    mar = par('mar')
+    par('mar' = c(mar[1],1,mar[3],1))
+    plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA,
+        main=paste0('Most common deletions (', '$label', ')'))
+    text(0, 0.3-1:$num/15, cex=0.7, family='mono', labels=c(''))
+    text(0, 0.3-1:$num/15, cex=0.7, family='mono', labels=c('", join("', '", @top_sequences), "'))
+}
+
+plot.figures <- function() {
+    if (del > 3) {
+        sub = paste0(del, ' deletions / $wt wild-type = ', format(100*del/(del+wt), digits=3),'%')
+
+        plot.deletion.sizes(data, sub)
+        plot.deletion.locations(data, sub)
+        plot.deletion.frequencies(data, sub)
+        plot.deletion.scatter(data, sub)
+
+    } else {
         plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main='$label')
         text(0, 0, labels=c('Not enough deletions for generating plots'))
+    }
+    if ($num > 1) {
+        plot.deletion.topseqs(data, sub)
+    }
 }
+
+pdf('$output_R_file')
+plot.figures();
 dev.off()
+
+png(sub('.pdf', '.%02d.png', '$output_R_file'))
+plot.figures();
+dev.off()
+
+svg(sub('.pdf', '.%02d.svg', '$output_R_file'))
+plot.figures();
+dev.off()
+
 ";
 
 close(R);
