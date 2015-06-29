@@ -146,15 +146,18 @@ sub get_file_from_input_dir {
 
     if ($file) {
 
-        # In case the fasta file has been provided
-        if (!-e "$input_dir/$file") {
+        # In case the file has been provided
+        if (-e $file) {
+            $this_file = $file;
+        } elsif (!-e "$input_dir/$file") {
             die "Cannot find \*$extension file $file in the input directory ($input_dir)\n";
+        } else {
+            $this_file = "$input_dir/$file";
         }
-        $this_file = "$input_dir/$file";
 
     } else {
 
-        # Otherwise, try to find the (hopefully) unique FASTA file in the input directory
+        # Otherwise, try to find the (hopefully) unique file with that extension in the input directory
         opendir(INPUT, $input_dir) or die;
         my @files = grep {/$extension$/} readdir(INPUT);
         closedir(INPUT);
