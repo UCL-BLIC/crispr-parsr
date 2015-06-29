@@ -251,25 +251,29 @@ del = dim(data)[1]
 wt = $wt
 
 pdf('$output_R_file')
-sub = paste0('$input_bam_file (', del, ' deletions / $wt wild-type = ', format(100*del/(del+wt), digits=3),'%)')
+if (del > 3) {
+    sub = paste0('$input_bam_file (', del, ' deletions / $wt wild-type = ', format(100*del/(del+wt), digits=3),'%)')
 
-h = hist(data[,1], breaks=(min(data[,1])-1):max(data[,1]), plot=F);
-plot(h\$counts, xlim=c(min(h\$breaks)+1,max(h\$breaks)), type='n', main='Histogram of Deletion sizes', sub=sub, xlab='Deletion size', ylab='counts');
-rect(h\$mids, 0, h\$mids+1, h\$counts, col='red')
+    h = hist(data[,1], breaks=(min(data[,1])-1):max(data[,1]), plot=F);
+    plot(h\$counts, xlim=c(min(h\$breaks)+1,max(h\$breaks)), type='n', main='Histogram of Deletion sizes', sub=sub, xlab='Deletion size', ylab='counts');
+    rect(h\$mids, 0, h\$mids+1, h\$counts, col='red')
 
-h = hist(data[,4], breaks=(min(data[,4])-1):(max(data[,4])+1), plot=F);
-plot(h\$counts, xlim=c(min(h\$breaks)+1,max(h\$breaks)), type='n', main='Midpoint location of the deletion', sub=sub, xlab='Location', ylab='counts');
-rect(h\$mids, 0, h\$mids+1, h\$counts, col='blue')
+    h = hist(data[,4], breaks=(min(data[,4])-1):(max(data[,4])+1), plot=F);
+    plot(h\$counts, xlim=c(min(h\$breaks)+1,max(h\$breaks)), type='n', main='Midpoint location of the deletion', sub=sub, xlab='Location', ylab='counts');
+    rect(h\$mids, 0, h\$mids+1, h\$counts, col='blue')
 
-range = data.frame(from=data[,2], to=data[,3])
-del <- vector(mode='numeric', length=max(data[,3]))
-for (i in 1:dim(range)[1]) { for (p in range[i,1]:range[i,2]) { del[p] <- del[p]+1 } }
-plot(del, xlim=c(min(range\$from-1),max(range\$to)+1), type='n', main='Frequency of deletion per bp', sub=sub, xlab='Location', ylab='counts')
-rect(min(range\$from):max(range\$to)-0.5, 0, min(range\$from):max(range\$to)+0.5, del[min(range\$from):max(range\$to)], col='lightblue', border='white')
-lines(min(range\$from):max(range\$to)-0.5, del[min(range\$from):max(range\$to)], type='s', col='black')
+    range = data.frame(from=data[,2], to=data[,3])
+    del <- vector(mode='numeric', length=max(data[,3]))
+    for (i in 1:dim(range)[1]) { for (p in range[i,1]:range[i,2]) { del[p] <- del[p]+1 } }
+    plot(del, xlim=c(min(range\$from-1),max(range\$to)+1), type='n', main='Frequency of deletion per bp', sub=sub, xlab='Location', ylab='counts')
+    rect(min(range\$from):max(range\$to)-0.5, 0, min(range\$from):max(range\$to)+0.5, del[min(range\$from):max(range\$to)], col='lightblue', border='white')
+    lines(min(range\$from):max(range\$to)-0.5, del[min(range\$from):max(range\$to)], type='s', col='black')
 
-smoothScatter(data[,4], data[,1], main='Scatter plot of Deletions sizes vs Midpoint location' , sub=sub, xlab='Location', ylab='Deletion size');
-
+    smoothScatter(data[,4], data[,1], main='Scatter plot of Deletions sizes vs Midpoint location' , sub=sub, xlab='Location', ylab='Deletion size');
+} else {
+        plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main='$input_bame_file')
+        text(0, 0, labels=c('Not enough deletions for generating plots'))
+}
 dev.off()
 ";
 
