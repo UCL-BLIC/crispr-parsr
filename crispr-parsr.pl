@@ -236,7 +236,7 @@ sub index_genome {
 sub merge_fastq_files {
     my ($input_dir, $merge_file, $output_dir) = @_;
     my $merged_files;
-    my $merge_counter = 0;
+    my $merge_counter = 1;
 
     # Build a hash ($all_files) to quickly check if a file exists in the input dir. As a bonus, also
     # store the path to that file in the values of the hash.    
@@ -257,7 +257,7 @@ sub merge_fastq_files {
             $label = $1;
             $i++;
         } else {
-            $label = "merged.$merge_counter";
+            $label = "sample.$merge_counter";
         }
         my $files1 = get_filenames_in_line($all_files, $lines[$i]);
         my $files2 = get_filenames_in_line($all_files, $lines[$i+1]);
