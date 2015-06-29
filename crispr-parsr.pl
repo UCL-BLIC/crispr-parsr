@@ -50,7 +50,7 @@ my $validated_files = run_trim_galore($trim_galore, $merged_files, $output_dir);
 
 my $bam_files = run_bowtie2($bowtie2_exe, $bowtie2_index_file, $validated_files, $output_dir);
 
-run_parser("../parse_crispr_pe_bam_file.pl", $bam_files, $this_wt_seq_file, $output_dir);
+run_parser("parse_crispr_pe_bam_file.pl", $bam_files, $this_wt_seq_file, $output_dir);
 
 
 =head2 create_readme_file
@@ -82,37 +82,47 @@ The information files (see below) contain the actual command line executed in ea
 
 
 Here is a brief description of the files you will find in here:
+
 * Reference files
+
  - bt2/                             Directory containing the indexed wild-type sequence for Bowtie2
 
+
 * Intermediary files
- - merged.X.R1.fastq                Reads for sample X (first pair)
- - merged.X.R2.fastq                Reads for sample X (second pair)
 
- - merged.X.R1.fastq_trimming_report.txt    Trimming report for reads in sample X (first pair)
- - merged.X.R2.fastq_trimming_report.txt    Trimming report for reads in sample X (second pair)
+ - "sample".R1.fastq                Reads for this sample (first pair, after merging)
+ - "sample".R2.fastq                Reads for this sample (second pair, after merging)
 
- - merged.X.R1_val_1.fq             Validated reads for sample X (first pair)
- - merged.X.R2_val_2.fq             Validated reads for sample X (second pair)
+ - "sample".R1.fastq_trimming_report.txt    Trimming report for reads in this sample (first pair)
+ - "sample".R2.fastq_trimming_report.txt    Trimming report for reads in this sample (second pair)
 
- - merged.X.R1_val_1_fastqc.html    Web page with FastQC output for reads in sample X (first pair)
- - merged.X.R1_val_1_fastqc.zip     ZIP file with FastQC output for reads in sample X (first pair)
- - merged.X.R2_val_2_fastqc.html    Web page with FastQC output for reads in sample X (second pair)
- - merged.X.R2_val_2_fastqc.zip     ZIP file with FastQC output for reads in sample X (second pair)
+ - "sample".R1_val_1.fq             Validated reads for this sample (first pair)
+ - "sample".R2_val_2.fq             Validated reads for this sample (second pair)
 
- - merged.X.bam                     Alignments for sample X (both pairs)
+ - "sample".R1_val_1_fastqc.html    Web page with FastQC output for reads in this sample (first pair)
+ - "sample".R1_val_1_fastqc.zip     ZIP file with FastQC output for reads in this sample (first pair)
+ - "sample".R2_val_2_fastqc.html    Web page with FastQC output for reads in this sample (second pair)
+ - "sample".R2_val_2_fastqc.zip     ZIP file with FastQC output for reads in this sample (second pair)
 
- - merged.X.bam.data.txt            Table wit deletions in sample X
+ - "sample".bam                     Alignments for this sample (both pairs)
+
+ - "sample".bam.data.txt            Table with deletions in this sample
+
 
 * Information files (actual command line + verbose output of these processes)
+
  - bowtie2-build.out.txt            Info from the bowtie2-build process (indexing the wild-type seq)
- - trim_galore.X.out.txt            Info from Trim Galore! for sampe X (trimming and QC)
- - bowtie2.X.out.txt                Info from the bowtie2 process for sample X (mapping the reads)
- - parser.X.out.txt                 Info from the parser process for sample X (extracting insertion and deletions)
+ - trim_galore."sample".out.txt     Info from Trim Galore! for this sampe (trimming and QC)
+ - bowtie2."sample".out.txt         Info from the bowtie2 process for this sample (mapping the reads)
+ - parser."sample".out.txt          Info from the parser process for this sample (extracting insertion and deletions)
+
 
 * Results
- - out.X.txt                    Stats on WT/insert/deletion/filtered reads + most common deletions
- - out.X.pdf                    Plots showing the location and size of the deletions
+
+ - "sample".out.txt                 Stats on WT/insert/deletion/filtered reads + most common deletions
+ - "sample".out.pdf                 Plots showing the location and size of the deletions (PDF format)
+ - "sample".out.XX.png              Plots showing the location and size of the deletions (PNG format)
+ - "sample".out.XX.svg              Plots showing the location and size of the deletions (SVG format)
 };
     close(README);
 
@@ -242,14 +252,21 @@ sub merge_fastq_files {
     my @lines = split("\n", $whole_text);
 
     for (my $i = 0; $i < @lines - 1; $i += 2) {
+        my $label;
+        if ($lines[$i] =~ /^(\w+)\:$/ and $i < @lines - 2) {
+            $label = $1;
+            $i++;
+        } else {
+            $label = "merged.$merge_counter";
+        }
         my $files1 = get_filenames_in_line($all_files, $lines[$i]);
         my $files2 = get_filenames_in_line($all_files, $lines[$i+1]);
         if (@$files1 != @$files2) {
             die "The number of FASTQ files on lines $i and ", ($i+1), " of the merge file ($merge_file) do not match\n";
         }
         $merge_counter++;
-        my $merged_filename1 = "$output_dir/merged.$merge_counter.R1.fastq";
-        my $merged_filename2 = "$output_dir/merged.$merge_counter.R2.fastq";
+        my $merged_filename1 = "$output_dir/$label.R1.fastq";
+        my $merged_filename2 = "$output_dir/$label.R2.fastq";
         my $command = ["cat", @$files1, ">", $merged_filename1];
         my ($ok, $err, $full_buff, $stdout_buff, $stderr_buff) = run(command => $command);
         if (!$ok) {
@@ -266,7 +283,7 @@ sub merge_fastq_files {
         if (!-e $merged_filename2) {
             die "Cannot create merged file ($merged_filename2) in the output directory ($output_dir)\n";
         }
-        push(@$merged_files, [$merged_filename1, $merged_filename2]);
+        $merged_files->{$label} = [$merged_filename1, $merged_filename2];
     }
 
     return $merged_files;
@@ -292,9 +309,7 @@ sub run_trim_galore {
     my ($trim_galore, $merged_files, $output_dir) = @_;
     my $validated_files;
 
-    my $count = 0;
-    foreach my $this_pair_of_merged_files (@$merged_files) {
-        $count++;
+    while (my ($label, $this_pair_of_merged_files) = each %$merged_files) {
         die "The pair of merged files is not a pair\n" if (@$this_pair_of_merged_files != 2);
         my $command = [$trim_galore, "--fastqc", "-o", $output_dir, "--paired", @$this_pair_of_merged_files];
         my ($ok, $err, $full_buff, $stdout_buff, $stderr_buff) = run(command => $command);
@@ -304,7 +319,7 @@ sub run_trim_galore {
         # Saves the command line and both stdout and stderr buffers (i.e. full buffer).
         # Note that it is not worth separating the STDOUT and STDERR buffers
         # in this case as Trim Galore! mixes them up.
-        open(OUT, ">$output_dir/trim_galore.${count}.out.txt") or die;
+        open(OUT, ">$output_dir/trim_galore.$label.out.txt") or die;
         print OUT "CMD: ", join(" ", @$command), "\n\n";
         print OUT "OUTPUT:\n";
         print OUT join("\n", @$full_buff);
@@ -320,7 +335,7 @@ sub run_trim_galore {
         if (!-e $validated_file2) {
             die "ERROR: Cannot find validated file $validated_file2\n";
         }
-        push(@$validated_files, [$validated_file1, $validated_file2]);
+        $validated_files->{$label} = [$validated_file1, $validated_file2];
     }
     
     #TODO: Check the FastQC output
@@ -346,10 +361,8 @@ sub run_bowtie2 {
     my ($bowtie2_exe, $bowtie2_index_file, $validated_files, $output_dir) = @_;
     my $bam_files;
 
-    my $count = 0;
-    foreach my $this_pair_of_validated_files (@$validated_files) {
-        $count++;
-        my $this_bam_file = "$output_dir/merged.$count.bam";
+    while (my ($label, $this_pair_of_validated_files) = each %$validated_files) {
+        my $this_bam_file = "$output_dir/$label.bam";
         if (@$this_pair_of_validated_files != 2) {
             die "Unexpected set of validated files: ".join(", ", @$this_pair_of_validated_files);
         }
@@ -364,7 +377,7 @@ sub run_bowtie2 {
         # Saves the command line and the stderr buffer.
         # The stdout buffer is the SAM output captured in the command and stored in the bam file
         # using samtools.
-        open(OUT, ">$output_dir/bowtie2.$count.out.txt") or die;
+        open(OUT, ">$output_dir/bowtie2.$label.out.txt") or die;
         print OUT "CMD: ", join(" ", @$command), "\n\n";
         print OUT "OUTPUT:\n";
         print OUT join("\n", @$stderr_buff);
@@ -374,7 +387,7 @@ sub run_bowtie2 {
         if (!-e $this_bam_file) {
             die "ERROR: Cannot find expected bam file $this_bam_file\n";
         }
-        push(@$bam_files, $this_bam_file);
+        $bam_files->{$label} = $this_bam_file;
     }
 
     return $bam_files;
@@ -396,20 +409,19 @@ sub run_bowtie2 {
 
 sub run_parser {
     my ($parser, $bam_files, $this_wt_seq_file, $output_dir) = @_;
-    my $count = 0;
-    foreach my $this_bam_file (@$bam_files) {
-        $count++;
-        my $this_pdf_file = "$output_dir/out.$count.pdf";
-        my $this_txt_file = "$output_dir/out.$count.txt";
+
+    while (my ($label, $this_bam_file) = each %$bam_files) {
+        my $this_pdf_file = "$output_dir/$label.out.pdf";
+        my $this_txt_file = "$output_dir/$label.out.txt";
         my $command = ["perl", $parser, "--input", $this_bam_file, "--out", $this_pdf_file, "--ref_seq", $this_wt_seq_file,
-                        ">", $this_txt_file];
+                        "--label", $label, ">", $this_txt_file];
         my ($ok, $err, $full_buff, $stdout_buff, $stderr_buff) = run(command => $command);
         if (!$ok) {
             die "ERROR while running parser: $err\n";
         }
         # Saves the command line and the stderr buffer.
         # The stdout buffer is the TXT output captured in the command.
-        open(OUT, ">$output_dir/parser.$count.out.txt") or die;
+        open(OUT, ">$output_dir/parser.$label.out.txt") or die;
         print OUT "CMD: ", join(" ", @$command), "\n\n";
         print OUT "OUTPUT:\n";
         print OUT join("\n", @$stderr_buff);

@@ -4,6 +4,7 @@ use strict;
 use Getopt::Long;
 
 my $help;
+my $label;
 my $input_bam_file;
 my $output_R_file;
 my $debug;
@@ -26,6 +27,7 @@ Options:
 GetOptions(
     "help"  => \$help,
     "debug"  => \$debug,
+    "label=s" => \$label,
     "input_file=s" => \$input_bam_file,
     "output_file=s" => \$output_R_file,
     "ref_seq=s" => \$ref_seq_file,
@@ -34,6 +36,10 @@ GetOptions(
 if ($help or !$input_bam_file or !$output_R_file) {
     print $desc;
     exit();
+}
+
+if (!$label) {
+    $label = $input_bam_file;
 }
 
 open(IN_SAM, "samtools view -H $input_bam_file |") or die;
@@ -252,7 +258,7 @@ wt = $wt
 
 pdf('$output_R_file')
 if (del > 3) {
-    sub = paste0('$input_bam_file (', del, ' deletions / $wt wild-type = ', format(100*del/(del+wt), digits=3),'%)')
+    sub = paste0('$label (', del, ' deletions / $wt wild-type = ', format(100*del/(del+wt), digits=3),'%)')
 
     h = hist(data[,1], breaks=(min(data[,1])-1):max(data[,1]), plot=F);
     plot(h\$counts, xlim=c(min(h\$breaks)+1,max(h\$breaks)), type='n', main='Histogram of Deletion sizes', sub=sub, xlab='Deletion size', ylab='counts');
@@ -271,7 +277,7 @@ if (del > 3) {
 
     smoothScatter(data[,4], data[,1], main='Scatter plot of Deletions sizes vs Midpoint location' , sub=sub, xlab='Location', ylab='Deletion size');
 } else {
-        plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main='$input_bame_file')
+        plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main='$label')
         text(0, 0, labels=c('Not enough deletions for generating plots'))
 }
 dev.off()
