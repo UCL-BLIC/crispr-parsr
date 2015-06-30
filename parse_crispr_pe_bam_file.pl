@@ -6,7 +6,7 @@ use Getopt::Long;
 my $help;
 my $label;
 my $input_bam_file;
-my $output_R_file;
+my $output_pdf_file;
 my $debug;
 my $ref_seq_file;
 my $min_overlap = 10;
@@ -32,11 +32,11 @@ GetOptions(
     "debug"  => \$debug,
     "label=s" => \$label,
     "input_file=s" => \$input_bam_file,
-    "output_file=s" => \$output_R_file,
+    "output_file=s" => \$output_pdf_file,
     "ref_seq=s" => \$ref_seq_file,
     );
 
-if ($help or !$input_bam_file or !$output_R_file) {
+if ($help or !$input_bam_file or !$output_pdf_file) {
     print $desc;
     exit();
 }
@@ -45,173 +45,7 @@ if (!$label) {
     $label = $input_bam_file;
 }
 
-open(IN_SAM, "samtools view -H $input_bam_file |") or die;
-my @header = <IN_SAM>;
-close(IN_SAM);
-
-open(IN_SAM, "samtools view $input_bam_file |") or die;
-
-my $data_file = "$input_bam_file.data.txt";
-open(DATA, ">$data_file");
-print DATA join("\t", "read", "event", "event_length", "from", "to", "midpoint", "seq"), "\n";
-
-my $exceptions;
-while (<IN_SAM>) {
-    chomp;
-    my ($qname1, $flag1, $rname1, $pos1, $mapq1, $cigar1, $rnext1, $pnext1, $tlen1, $seq1, $qual1, @others1) = split("\t", $_);
-    $_ = <IN_SAM>;
-    chomp;
-    my ($qname2, $flag2, $rname2, $pos2, $mapq2, $cigar2, $rnext2, $pnext2, $tlen2, $seq2, $qual2, @others2) = split("\t", $_);
-    my $md1 = (grep {/^MD:Z:/} @others1)[0];
-    my $md2 = (grep {/^MD:Z:/} @others2)[0];
-    if ($debug) {
-      print join("\t", $qname1, $flag1, $rname1, $pos1, $mapq1, $cigar1, $rnext1, $pnext1, $tlen1), "\n";
-      print join("\t", $qname2, $flag2, $rname2, $pos2, $mapq2, $cigar2, $rnext2, $pnext2, $tlen2), "\n";
-    }
-    if ($qname1 ne $qname2) {
-        die "SAM file sorted or not for PE reads\n";
-    }
-    next if ($rname1 ne $rname2);
-    if ($cigar1 eq "*" or $cigar2 eq "*") {
-        $exceptions->{"01.no_cigar"}++;
-        next;
-    }
-
-    if (length($seq1) < $min_length or length($seq2) < $min_length) {
-        $exceptions->{"02.short_read"}++;
-        next;
-    }
-
-    my $end1 = $pos1 + length($seq1);
-    my $end2 = $pos2 + length($seq2);
-    my $overlap_start = $pos1>$pos2?$pos1:$pos2;
-    my $overlap_end = $end1<$end2?$end1:$end2;
-
-    if ($overlap_end < $overlap_start + $min_overlap) {
-        $exceptions->{"03.no_overlap"}++;
-        next;
-    }
-#     print "Overlap: $overlap_start-$overlap_end\n";
-
-    my $original_seq1 = $seq1;
-    my $original_seq2 = $seq2;
-
-    if ($pos1 > $pos2) {
-        # Clip R2
-        my $diff_in_ref_bp = $pos1 - $pos2;
-        my ($initial_match) = $cigar2 =~ /^(\d*)M/;
-#         print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
-        if ($initial_match < $diff_in_ref_bp) {
-            # Indels in the 3' non-overlapping sequence: ignore the pair!
-            $exceptions->{"05.indel_in_3prime"}++;
-            next;
-        }
-        ($initial_match) = $md2 =~ /^MD:Z:(\d*)/;
-#         print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
-        if ($initial_match < $diff_in_ref_bp) {
-            # Indels in the 3' non-overlapping sequence: ignore the pair!
-            $exceptions->{"06.mismatch_in_3prime"}++;
-            next;
-        }
-        substr($seq2, 0, $diff_in_ref_bp, "");
-        print "1A $seq1\n1A $seq2\n" if ($debug);
-    } elsif ($pos1 < $pos2) {
-        # Clip R1
-        my $diff_in_ref_bp = $pos2 - $pos1;
-        my ($initial_match) = $cigar1 =~ /^(\d*)M/;
-#         print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
-        if ($initial_match < $diff_in_ref_bp) {
-            # Indels in the 3' non-overlapping sequence: ignore the pair!
-            $exceptions->{"05.indel_in_3prime"}++;
-            next;
-        }
-        ($initial_match) = $md1 =~ /^MD:Z:(\d*)/;
-#         print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
-        if ($initial_match < $diff_in_ref_bp) {
-            # Indels in the 3' non-overlapping sequence: ignore the pair!
-            $exceptions->{"06.mismatch_in_3prime"}++;
-            next;
-        }
-        substr($seq1, 0, $diff_in_ref_bp, "");
-        print "1B $seq1\n1B $seq2\n" if ($debug);
-    }
-
-    if ($end1 > $end2) {
-        # Clip R1
-        my $diff_in_ref_bp = $end1 - $end2;
-        my ($last_match) = $cigar1 =~ /(\d*)M$/;
-#         print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
-        if ($last_match < $diff_in_ref_bp) {
-            # Indels in the 3' non-overlapping sequence: ignore the pair!
-            $exceptions->{"07.indel_in_5prime"}++;
-            next;
-        }
-        ($last_match) = $md1 =~ /(\d*)$/;
-#         print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
-        if ($last_match < $diff_in_ref_bp) {
-            # Indels in the 3' non-overlapping sequence: ignore the pair!
-            $exceptions->{"08.mismatch_in_5prime"}++;
-            next;
-        }
-        substr($seq1, -$diff_in_ref_bp, $diff_in_ref_bp, "");
-        print "2A $seq1\n2A $seq2\n" if ($debug);
-    } elsif ($end1 < $end2) {
-        # Clip R2
-        my $diff_in_ref_bp = $end2 - $end1;
-        my ($last_match) = $cigar2 =~ /(\d*)M$/;
-#         print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
-        if ($last_match < $diff_in_ref_bp) {
-            # Indels in the 3' non-overlapping sequence: ignore the pair!
-            $exceptions->{"07.indel_in_5prime"}++;
-            next;
-        }
-        ($last_match) = $md2 =~ /(\d*)$/;
-#         print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
-        if ($last_match < $diff_in_ref_bp) {
-            # Indels in the 3' non-overlapping sequence: ignore the pair!
-            $exceptions->{"08.mismatch_in_5prime"}++;
-            next;
-        }
-        substr($seq2, -$diff_in_ref_bp, $diff_in_ref_bp, "");
-        print "2B $seq1\n2B $seq2\n" if ($debug);
-    }
-
-    if ($seq1 ne $seq2) {
-        $exceptions->{"09.mismatch_in_overlap"}++;
-        print "MM $seq1\nMM $seq2\n" if ($debug);
-        next;
-    }
-
-    if ($md1 =~ /^MD:Z:\d+\^[A-Z]+\d+$/ and $md2 =~ /^MD:Z:\d+\^[A-Z]+\d+$/ and $cigar1 =~ /^\d+M\d*D\d+M$/ and $cigar2 =~ /^\d+M\d*D\d+M$/) {
-        $exceptions->{"OK:clean_deletion"}++;
-        my ($deletion_length) = $cigar1 =~ /(\d+)D/;
-#         my ($insertion_length2) = $cigar2 =~ /(\d+)D/;
-#         my ($insertion_length3) = length(($md1 =~ /^MD:Z:\d+\^([A-Z]+)\d+$/)[0]);
-#         my ($insertion_length4) = length(($md2 =~ /^MD:Z:\d+\^([A-Z]+)\d+$/)[0]);
-#         print join("--", $insertion_length, $insertion_length2, $insertion_length3, $insertion_length4, $cigar1, $cigar2, $md1, $md2), "\n";
-#         die if ($insertion_length != $insertion_length2);
-#         die if ($insertion_length != $insertion_length3);
-#         die if ($insertion_length != $insertion_length4);
-        my $position = ($cigar1 =~ /^(\d+)M/)[0] + $pos1;
-        my $deletion_seq = substr($original_seq1, $position, $deletion_length);
-        print DATA join("\t", $qname1, "DEL", $deletion_length, $position, $position + $deletion_length, $position + $deletion_length/2, $deletion_seq), "\n";
-    } elsif ($md1 =~ /^MD:Z:\d+$/ and $md2 =~ /^MD:Z:\d+$/ and $cigar1 =~ /^\d+M\d*I\d+M$/ and $cigar2 =~ /^\d+M\d*I\d+M$/) { 
-        $exceptions->{"OK:clean_insertion"}++;
-        my ($insertion_length) = $cigar1 =~ /(\d+)I/;
-        my $position = ($cigar1 =~ /^(\d+)M/)[0] + $pos1;
-        my $insertion_seq = substr($original_seq1, $position, $insertion_length);
-        print DATA join("\t", $qname1, "INS", $insertion_length, $position + 1, $position, $position + 1/2, $insertion_seq), "\n";
-    } elsif ($md1 =~ /^MD:Z:\d+$/ and $md2 =~ /^MD:Z:\d+$/ and $cigar1 =~ /^\d+M$/ and $cigar2 =~ /^\d+M$/) {
-        $exceptions->{"OK:WILD-TYPE"}++;
-        next;
-    } else {
-#         print join("\t", $cigar1, $md1, $cigar2, $md2), "\n";
-        $exceptions->{"10.other_mismatches"}++;
-        next;
-    }
-}
-close(IN_SAM);
-close(DATA);
+my ($data_file, $exceptions) = read_bam_file($input_bam_file);
 
 my $total = 0;
 foreach my $key (sort keys %$exceptions) {
@@ -223,9 +57,19 @@ print "TOTAL: $total\n";
 
 my $wt = ($exceptions->{"OK:WILD-TYPE"} or 0);
 
-my $wt_sequence;
-my @top_sequences;
+my $top_sequences = [];
 if ($ref_seq_file) {
+    $top_sequences = get_top_sequences($ref_seq_file, $data_file);
+}
+
+my $R_script = write_R_script($label, $data_file, $top_sequences, $wt, $output_pdf_file);
+
+print qx"Rscript $R_script";
+
+sub get_top_sequences {
+    my ($ref_seq_file, $data_file) = @_;
+    my $top_sequences = [];
+
     open(REF, $ref_seq_file) or die;
     my $ref_seq;
     while (<REF>) {
@@ -258,30 +102,212 @@ if ($ref_seq_file) {
     my $header = sprintf($format, "Sequence" , "Num", "TYPE", "L", "POS", "Diff");
     my $wt_sequence = sprintf($format, substr($ref_seq, $min_from, $max_to-$min_from), $wt, "W-T", 0, "NA", "");
 
-    @top_sequences = ($header, "", $wt_sequence, "");
+    $top_sequences = [$header, "", $wt_sequence, ""];
 
     foreach my $this_line (@del_lines) {
         my ($num, $del_length, $from, $seq) = $this_line =~ /(\d+)\s(\-?\d+)\s(\d+)\s(\w+)/;
         my $aligned_seq = substr($ref_seq, $min_from, $from-$min_from-1) . '-'x$del_length . substr($ref_seq, ($from+$del_length-1), $max_to - ($from+$del_length-1));
-        push(@top_sequences, sprintf($format, $aligned_seq, $num, "DEL", $del_length, $from, $seq));
+        push(@$top_sequences, sprintf($format, $aligned_seq, $num, "DEL", $del_length, $from, $seq));
     }
-    push(@top_sequences, "");
+    push(@$top_sequences, "");
     foreach my $this_line (@ins_lines) {
         my ($num, $ins_length, $from, $seq) = $this_line =~ /(\d+)\s(\-?\d+)\s(\d+)\s(\w+)/;
         my $aligned_seq = substr($ref_seq, $min_from, $max_to-$min_from);
         substr($aligned_seq, $from-$min_from-2, 2, "><");
-        push(@top_sequences, sprintf($format, $aligned_seq, $num, "INS", $ins_length, $from, ">$seq<"));
+        push(@$top_sequences, sprintf($format, $aligned_seq, $num, "INS", $ins_length, $from, ">$seq<"));
     }
     
+    print "\n", join("\n", @$top_sequences), "\n";
 
-    print "\n", join("\n", @top_sequences), "\n";
+    return $top_sequences;
 }
 
-my $num_lines = @top_sequences;
+sub read_bam_file {
+    my ($bam_file) = @_;
+    my $exceptions;
 
-open(R, "|R --vanilla --slave") or die;
+    open(SAM, "samtools view $bam_file |") or die;
 
-print R "
+    my $data_file = "$bam_file.data.txt";
+    open(DATA, ">$data_file");
+    print DATA join("\t", "read", "event", "event_length", "from", "to", "midpoint", "seq"), "\n";
+
+    while (<SAM>) {
+        ## Read both lines (assuming unsorted BAM file)
+        chomp;
+        my ($qname1, $flag1, $rname1, $pos1, $mapq1, $cigar1, $rnext1, $pnext1, $tlen1, $seq1, $qual1, @others1) = split("\t", $_);
+        $_ = <SAM>;
+        chomp;
+        my ($qname2, $flag2, $rname2, $pos2, $mapq2, $cigar2, $rnext2, $pnext2, $tlen2, $seq2, $qual2, @others2) = split("\t", $_);
+        my $md1 = (grep {/^MD:Z:/} @others1)[0];
+        my $md2 = (grep {/^MD:Z:/} @others2)[0];
+        my $end1 = $pos1 + length($seq1);
+        my $end2 = $pos2 + length($seq2);
+        if ($debug) {
+          print join("\t", $qname1, $flag1, $rname1, $pos1, $mapq1, $cigar1, $rnext1, $pnext1, $tlen1), "\n";
+          print join("\t", $qname2, $flag2, $rname2, $pos2, $mapq2, $cigar2, $rnext2, $pnext2, $tlen2), "\n";
+        }
+
+        ## Check that both lines refer to the same read
+        if ($qname1 ne $qname2) {
+            die "SAM file sorted or not for PE reads\n";
+        }
+        die "SAM file seems to have been sorted in some way. PE reads are not consecutive\n" if ($rname1 ne $rname2);
+
+        ## Check that both reads align (i.e., they have a cigar string)
+        if ($cigar1 eq "*" or $cigar2 eq "*") {
+            $exceptions->{"01.no_cigar"}++;
+            next;
+        }
+
+        ## Check that both reads are long enough
+        if (length($seq1) < $min_length or length($seq2) < $min_length) {
+            $exceptions->{"02.short_read"}++;
+            next;
+        }
+
+        ## Check that both reads overlap and that the overlap is long enough
+        my $overlap_start = $pos1>$pos2?$pos1:$pos2;
+        my $overlap_end = $end1<$end2?$end1:$end2;
+        if ($overlap_end < $overlap_start + $min_overlap) {
+            $exceptions->{"03.no_overlap"}++;
+            next;
+        }
+#        print "Overlap: $overlap_start-$overlap_end\n";
+
+        my $original_seq1 = $seq1;
+        my $original_seq2 = $seq2;
+
+        if ($pos1 > $pos2) {
+            # Clip R2
+            my $diff_in_ref_bp = $pos1 - $pos2;
+            my ($initial_match) = $cigar2 =~ /^(\d*)M/;
+#             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
+            if ($initial_match < $diff_in_ref_bp) {
+                # Indels in the 3' non-overlapping sequence: ignore the pair!
+                $exceptions->{"05.indel_in_3prime"}++;
+                next;
+            }
+            ($initial_match) = $md2 =~ /^MD:Z:(\d*)/;
+#             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
+            if ($initial_match < $diff_in_ref_bp) {
+                # Indels in the 3' non-overlapping sequence: ignore the pair!
+                $exceptions->{"06.mismatch_in_3prime"}++;
+                next;
+            }
+            substr($seq2, 0, $diff_in_ref_bp, "");
+            print "1A $seq1\n1A $seq2\n" if ($debug);
+        } elsif ($pos1 < $pos2) {
+            # Clip R1
+            my $diff_in_ref_bp = $pos2 - $pos1;
+            my ($initial_match) = $cigar1 =~ /^(\d*)M/;
+#             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
+            if ($initial_match < $diff_in_ref_bp) {
+                # Indels in the 3' non-overlapping sequence: ignore the pair!
+                $exceptions->{"05.indel_in_3prime"}++;
+                next;
+            }
+            ($initial_match) = $md1 =~ /^MD:Z:(\d*)/;
+#             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
+            if ($initial_match < $diff_in_ref_bp) {
+                # Indels in the 3' non-overlapping sequence: ignore the pair!
+                $exceptions->{"06.mismatch_in_3prime"}++;
+                next;
+            }
+            substr($seq1, 0, $diff_in_ref_bp, "");
+            print "1B $seq1\n1B $seq2\n" if ($debug);
+        }
+
+        if ($end1 > $end2) {
+            # Clip R1
+            my $diff_in_ref_bp = $end1 - $end2;
+            my ($last_match) = $cigar1 =~ /(\d*)M$/;
+#             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
+            if ($last_match < $diff_in_ref_bp) {
+                # Indels in the 3' non-overlapping sequence: ignore the pair!
+                $exceptions->{"07.indel_in_5prime"}++;
+                next;
+            }
+            ($last_match) = $md1 =~ /(\d*)$/;
+#             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
+            if ($last_match < $diff_in_ref_bp) {
+                # Indels in the 3' non-overlapping sequence: ignore the pair!
+                $exceptions->{"08.mismatch_in_5prime"}++;
+                next;
+            }
+            substr($seq1, -$diff_in_ref_bp, $diff_in_ref_bp, "");
+            print "2A $seq1\n2A $seq2\n" if ($debug);
+        } elsif ($end1 < $end2) {
+            # Clip R2
+            my $diff_in_ref_bp = $end2 - $end1;
+            my ($last_match) = $cigar2 =~ /(\d*)M$/;
+#             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
+            if ($last_match < $diff_in_ref_bp) {
+                # Indels in the 3' non-overlapping sequence: ignore the pair!
+                $exceptions->{"07.indel_in_5prime"}++;
+                next;
+            }
+            ($last_match) = $md2 =~ /(\d*)$/;
+#             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
+            if ($last_match < $diff_in_ref_bp) {
+                # Indels in the 3' non-overlapping sequence: ignore the pair!
+                $exceptions->{"08.mismatch_in_5prime"}++;
+                next;
+            }
+            substr($seq2, -$diff_in_ref_bp, $diff_in_ref_bp, "");
+            print "2B $seq1\n2B $seq2\n" if ($debug);
+        }
+
+        if ($seq1 ne $seq2) {
+            $exceptions->{"09.mismatch_between_reads"}++;
+            print "MM $seq1\nMM $seq2\n" if ($debug);
+            next;
+        }
+
+        if ($md1 =~ /^MD:Z:\d+\^[A-Z]+\d+$/ and $md2 =~ /^MD:Z:\d+\^[A-Z]+\d+$/ and $cigar1 =~ /^\d+M\d*D\d+M$/ and $cigar2 =~ /^\d+M\d*D\d+M$/) {
+            $exceptions->{"OK:clean_deletion"}++;
+            my ($deletion_length) = $cigar1 =~ /(\d+)D/;
+#             my ($insertion_length2) = $cigar2 =~ /(\d+)D/;
+#             my ($insertion_length3) = length(($md1 =~ /^MD:Z:\d+\^([A-Z]+)\d+$/)[0]);
+#             my ($insertion_length4) = length(($md2 =~ /^MD:Z:\d+\^([A-Z]+)\d+$/)[0]);
+#             print join("--", $insertion_length, $insertion_length2, $insertion_length3, $insertion_length4, $cigar1, $cigar2, $md1, $md2), "\n";
+#             die if ($insertion_length != $insertion_length2);
+#             die if ($insertion_length != $insertion_length3);
+#             die if ($insertion_length != $insertion_length4);
+            my $position = ($cigar1 =~ /^(\d+)M/)[0] + $pos1;
+            my $deletion_seq = substr($original_seq1, $position, $deletion_length);
+            print DATA join("\t", $qname1, "DEL", $deletion_length, $position, $position + $deletion_length, $position + $deletion_length/2, $deletion_seq), "\n";
+        } elsif ($md1 =~ /^MD:Z:\d+$/ and $md2 =~ /^MD:Z:\d+$/ and $cigar1 =~ /^\d+M\d*I\d+M$/ and $cigar2 =~ /^\d+M\d*I\d+M$/) { 
+            $exceptions->{"OK:clean_insertion"}++;
+            my ($insertion_length) = $cigar1 =~ /(\d+)I/;
+            my $position = ($cigar1 =~ /^(\d+)M/)[0] + $pos1;
+            my $insertion_seq = substr($original_seq1, $position, $insertion_length);
+            print DATA join("\t", $qname1, "INS", $insertion_length, $position + 1, $position, $position + 1/2, $insertion_seq), "\n";
+        } elsif ($md1 =~ /^MD:Z:\d+$/ and $md2 =~ /^MD:Z:\d+$/ and $cigar1 =~ /^\d+M$/ and $cigar2 =~ /^\d+M$/) {
+            $exceptions->{"OK:WILD-TYPE"}++;
+            next;
+        } else {
+#             print join("\t", $cigar1, $md1, $cigar2, $md2), "\n";
+            $exceptions->{"10.other_mismatches"}++;
+            next;
+        }
+    }
+    close(SAM);
+    close(DATA);
+
+    return ($data_file, $exceptions);
+}
+
+
+sub write_R_script {
+    my ($label, $data_file, $top_sequences, $wt, $output_pdf_file) = @_;
+
+    my $num_lines = @$top_sequences;
+    my $R_script = $data_file;
+    $R_script =~ s/.data.txt$/.R/;
+
+    open(R, ">$R_script") or die;
+    print R "
 data <- read.table('$data_file', header=T, row.names=1)
 
 # =============================================================================
@@ -322,7 +348,7 @@ perc.ins = paste0(format(100*num.ins/num.total, digits=3),'%')
 #
 #  The histograms are for the lengths (sizes) of the deletions and insertions.
 # =============================================================================
-plot.size.histograms <- function(data.del, data.ins, sub) {
+plot.size.histograms <- function(data.del, data.ins) {
     ### Use same breaks (x-axis) for all 3 plots. Make sure the range goes from 1-10 at least.
     breaks = (min(data.del[,1],data.ins[,1],1)-1):max(data.del[,1], data.ins[,1], 10)
 
@@ -392,7 +418,7 @@ plot.size.histograms <- function(data.del, data.ins, sub) {
 #  The histograms are for the location of the mid-point of the deletions and
 #  insertions.
 # =============================================================================
-plot.location.images <- function(data.del, data.ins, sub) {
+plot.location.images <- function(data.del, data.ins) {
     ### Use same breaks (x-axis) for all 3 plots. Make sure the range spans at least 10 bp.
     breaks = (min(data.del[,4],data.ins[,4])-1):max(data.del[,4], data.ins[,4])+1
     while (length(breaks) < 10) {
@@ -485,7 +511,7 @@ plot.location.images <- function(data.del, data.ins, sub) {
 #  from the wild-type sequence has been deleted. That number is a sum across
 #  sequences with a clean deletion.
 # =============================================================================
-plot.deletion.frequencies <- function(data, sub) {
+plot.deletion.frequencies <- function(data) {
     ### Create a new data.frame with the from and to values
     range = data.frame(from=data[,2], to=data[,3])
 
@@ -497,7 +523,7 @@ plot.deletion.frequencies <- function(data, sub) {
     # empty plot
     plot(del, xlim=c(min(range\$from-1),max(range\$to)+1), type='n',
         main=paste0('Frequency of deletion per bp (', '$label', ')'),
-        sub=sub, xlab='Location', ylab='counts')
+        xlab='Location of deleted bp', ylab='counts')
     # add light blue rectangles with white background
     rect(min(range\$from):max(range\$to)-0.5, 0, min(range\$from):max(range\$to)+0.5,
         del[min(range\$from):max(range\$to)], col='lightblue', border='white')
@@ -526,7 +552,7 @@ plot.pie.chart <- function() {
 #  This method plots the most common INS and DEL. The strings are extracted
 #  from the \@top_sequences Perl variable
 # =============================================================================
-plot.topseqs <- function(data, sub) {
+plot.topseqs <- function(data) {
     ### Use smaller top and bottom margins
     mar = par('mar')
     par('mar' = c(mar[1],1,mar[3],1))
@@ -534,7 +560,7 @@ plot.topseqs <- function(data, sub) {
     plot(NA,xlim=c(0,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA,
         main=paste0('Most common events (', '$label', ')'))
     ### Add text
-    text(0, 1-1:$num_lines/25, cex=0.4, adj=0, family='mono', labels=c('", join("', '", @top_sequences), "'))
+    text(0, 1-1:$num_lines/25, cex=0.4, adj=0, family='mono', labels=c('", join("', '", @$top_sequences), "'))
 }
 
 
@@ -549,18 +575,20 @@ plot.figures <- function() {
     ### Check that there are data to be plotted
     if (num.del+num.ins > 0) {
     
-        sub = paste0(num.del, ' deletions / $wt wild-type = ', format(100*num.del/(num.del+num.wt), digits=3),'%')
-
-        plot.size.histograms(data.del, data.ins, sub)
-        plot.location.images(data.del, data.ins, sub)
-        plot.deletion.frequencies(data.del, sub)
+        plot.size.histograms(data.del, data.ins)
+        plot.location.images(data.del, data.ins)
+        plot.deletion.frequencies(data.del)
         plot.pie.chart()
 
     } else {
         plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main='$label')
         text(0, 0, labels=c('No events to plot'))
     }
-    plot.topseqs(data.del, sub)
+";
+    if (@$top_sequences) {
+        print R "   plot.topseqs(data.del)\n";
+    }
+    print R "
 }
 
 # =============================================================================
@@ -569,22 +597,23 @@ plot.figures <- function() {
 #  Here the plots are created and saved to a PDF file , then to a set of PNG
 #  files and finally to a set of SVG files.
 # =============================================================================
-pdf('$output_R_file')
+pdf('$output_pdf_file')
 plot.figures();
 dev.off()
 
 # Substitute the .pdf extension by %02d.png (to create several files like 01, 02, etc)
-png(sub('.pdf', '.%02d.png', '$output_R_file'))
+png(sub('.pdf', '.%02d.png', '$output_pdf_file'))
 plot.figures();
 dev.off()
 
 # Substitute the .pdf extension by %02d.svg (to create several files like 01, 02, etc)
-svg(sub('.pdf', '.%02d.svg', '$output_R_file'))
+svg(sub('.pdf', '.%02d.svg', '$output_pdf_file'))
 plot.figures();
 dev.off()
 
 ";
 
-close(R);
-
-
+    close(R);
+    
+    return($R_script);
+}
