@@ -227,8 +227,7 @@ sub index_genome {
   Example       : my $merged_files = merge_files($input_dir, $merge_filename, $output_dirname);
   Description   : Takes the list of files to be merged from the $merge_filename and merges them. The
                   name of the new files are returned. Note that this is intended for PE reads only.
-  Returns       : arrayref or arrays, i.e. ref to a matrix, with the name of the merged files. Each
-                  row is a pair of files (for PE reads) to treat together.
+  Returns       : hashref or arrays. ($label => [$merged_R1, $merged_R2])
   Exceptions    : Dies if problems with the input or the output.
 
 =cut
@@ -293,12 +292,11 @@ sub merge_fastq_files {
 =head2 run_trim_galore
 
   Arg[1]        : string $trim_galore (the name of the executable, incl. the full path if needed)
-  Arg[2]        : arrayref $merged_files (see merge_files)
+  Arg[2]        : hashref $merged_files ($label => [$fastq_R1, $fastq_R2])
   Arg[3]        : string $output_dirname
   Example       : my $validated_files = run_trim_galore($trim_galore, $merged_files, $output_dirname);
   Description   : Runs Trim Galore! on paired files and returns the name of the validated files
-  Returns       : arrayref or arrays, i.e. ref to a matrix, with the name of the validated files. Each
-                  row is a pair of files (for PE reads) to treat together.
+  Returns       : hashref or arrays. ($label => [$val_fastq_R1, $val_fastq_R2])
   Exceptions    : Dies if problems with the input or the output.
   
   TODO          : Check the output of FASTQC
@@ -347,12 +345,12 @@ sub run_trim_galore {
 
   Arg[1]        : string $bowtie2 (the name of the executable, incl. the full path if needed)
   Arg[2]        : string $bowtie2_index_filename_prefix (to be used in bowtie2 command line)
-  Arg[3]        : arrayref $fastq_files (matrix with pairs of fastq files to align with Bowtie2
+  Arg[3]        : hashref $fastq_files ($label => [$fastq_R1, $fastq_R2])
   Arg[4]        : string $output_dirname
   Example       : my $bam_files = run_bowtie2($bowtie2_exe, $bowtie2_index_file, $validated_files, $output_dir);
   Description   : Runs Bowtie2 on the input FASTQ files using the given index. Output is BAM-transformed
                   and stored in the output directory. The method returns the list of BAM files.
-  Returns       : listref of BAM filenames
+  Returns       : hashref of BAM filenames ($label => $bam_file)
   Exceptions    : Wrong format for the matrix or errors running Bowtie2
 
 =cut
@@ -397,7 +395,7 @@ sub run_bowtie2 {
 =head2 run_parser
 
   Arg[1]        : string $parser (the name of the Perl script with full path)
-  Arg[2]        : arrayref $bam_files (arrayref of bam files from Bowtie2)
+  Arg[2]        : hashref $bam_files ($label => $bam_file)
   Arg[3]        : string $wt_fasta_file
   Arg[4]        : string $output_dirname
   Example       : run_parser($parser, $bam_files, $wt_fasta_file, $output_dir);
