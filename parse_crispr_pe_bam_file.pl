@@ -45,17 +45,17 @@ if (!$label) {
     $label = $input_bam_file;
 }
 
-my ($data_file, $exceptions) = read_bam_file($input_bam_file);
+my ($data_file, $stats) = parse_bam_file($input_bam_file);
 
 my $total = 0;
-foreach my $key (sort keys %$exceptions) {
-    my $value = $exceptions->{$key};
+foreach my $key (sort keys %$stats) {
+    my $value = $stats->{$key};
     print "$key: $value\n";
     $total += $value;
 }
 print "TOTAL: $total\n";
 
-my $wt = ($exceptions->{"OK:WILD-TYPE"} or 0);
+my $wt = ($stats->{"OK:WILD-TYPE"} or 0);
 
 my $top_sequences = [];
 if ($ref_seq_file) {
@@ -66,10 +66,28 @@ my $R_script = write_R_script($label, $data_file, $top_sequences, $wt, $output_p
 
 print qx"Rscript $R_script";
 
+exit(0);
+
+
+=head2 get_top_sequences
+
+  Arg[1]        : string $ref_seq_filename
+  Arg[2]        : string $data_filename
+  Example       : my $top_sequences = get_top_sequences($ref_seq_file, $$data_file);
+  Description   : Reads from the $data_file the most common deletions and insertions (up to 10) and
+                  aligns them to the wild-type sequence.
+  Returns       : arrayref of strings
+  Exceptions    : Dies if any filename is not found.
+
+=cut
+
 sub get_top_sequences {
     my ($ref_seq_file, $data_file) = @_;
     my $top_sequences = [];
 
+    ## ------------------------------------------------------------------------------
+    ## Reads the fasta sequence
+    ## ------------------------------------------------------------------------------
     open(REF, $ref_seq_file) or die;
     my $ref_seq;
     while (<REF>) {
@@ -78,8 +96,17 @@ sub get_top_sequences {
         $ref_seq .= $_;
     }
 
+
+    ## ------------------------------------------------------------------------------
+    ## Reads and extract stats on most common deletions and insertions:
+    ## ------------------------------------------------------------------------------
     my @del_lines = qx"more $data_file | awk '\$2 == \"DEL\" { print \$3, \$4, \$7}' | sort | uniq -c | sort -rn | head -n 10";
     my @ins_lines = qx"more $data_file | awk '\$2 == \"INS\" { print \$3, \$4, \$7}' | sort | uniq -c | sort -rn | head -n 10";
+
+
+    ## ------------------------------------------------------------------------------
+    ## Calculates the region of the REF sequence to display
+    ## ------------------------------------------------------------------------------
     my $min_from;
     my $max_to;
     my $longest_seq = 0;
@@ -98,33 +125,73 @@ sub get_top_sequences {
     $min_from -= 21;
     $max_to += 19;
 
+    ## ------------------------------------------------------------------------------
+    ## Sets the output format (using whitespaces to be nicely printed in R afterewards)
+    ## ------------------------------------------------------------------------------
     my $format = "\%-".($max_to-$min_from)."s \%7s \%4s \%3s \%6s \%-${longest_seq}s";
+
+
+    ## ------------------------------------------------------------------------------
+    ## Header and WT sequence
+    ## ------------------------------------------------------------------------------
     my $header = sprintf($format, "Sequence" , "Num", "TYPE", "L", "POS", "Diff");
     my $wt_sequence = sprintf($format, substr($ref_seq, $min_from, $max_to-$min_from), $wt, "W-T", 0, "NA", "");
-
     $top_sequences = [$header, "", $wt_sequence, ""];
 
+
+    ## ------------------------------------------------------------------------------
+    ## Most common deletions
+    ## ------------------------------------------------------------------------------
     foreach my $this_line (@del_lines) {
         my ($num, $del_length, $from, $seq) = $this_line =~ /(\d+)\s(\-?\d+)\s(\d+)\s(\w+)/;
         my $aligned_seq = substr($ref_seq, $min_from, $from-$min_from-1) . '-'x$del_length . substr($ref_seq, ($from+$del_length-1), $max_to - ($from+$del_length-1));
         push(@$top_sequences, sprintf($format, $aligned_seq, $num, "DEL", $del_length, $from, $seq));
     }
+
+
+    ## ------------------------------------------------------------------------------
+    ## Separation line
+    ## ------------------------------------------------------------------------------
     push(@$top_sequences, "");
+
+
+    ## ------------------------------------------------------------------------------
+    ## Most common insertions
+    ## ------------------------------------------------------------------------------
     foreach my $this_line (@ins_lines) {
         my ($num, $ins_length, $from, $seq) = $this_line =~ /(\d+)\s(\-?\d+)\s(\d+)\s(\w+)/;
         my $aligned_seq = substr($ref_seq, $min_from, $max_to-$min_from);
         substr($aligned_seq, $from-$min_from-2, 2, "><");
         push(@$top_sequences, sprintf($format, $aligned_seq, $num, "INS", $ins_length, $from, ">$seq<"));
     }
-    
+
+    # Print this on the standard output
     print "\n", join("\n", @$top_sequences), "\n";
 
+    # Return the lines (as an arrayref)
     return $top_sequences;
 }
 
-sub read_bam_file {
+
+=head2 parse_bam_file
+
+  Arg[1]        : string $bam_filename
+  Example       : my ($data_filename, $stats) = parse_bam_file($bam_file);
+  Description   : Extracts from the $bam_file all the PE reads that match all the criteria (aligned,
+                  > min_length, good overlap, no indel or mismatch before or after the overlap,
+                  perfect match between both reads and just a single insertion or deletion (but no
+                  mismatches) w.r.t. the ref sequence in the overlap
+  Returns       : array of $data_filename and $stats. These are:
+                  - string with the filename where the resulting insertion and deletions have been
+                    stored
+                  - hashref of keys (event) and values (number of these events)
+  Exceptions    : Dies if it cannot open the file with samtools
+
+=cut
+
+sub parse_bam_file {
     my ($bam_file) = @_;
-    my $exceptions;
+    my $stats;
 
     open(SAM, "samtools view $bam_file |") or die;
 
@@ -133,7 +200,10 @@ sub read_bam_file {
     print DATA join("\t", "read", "event", "event_length", "from", "to", "midpoint", "seq"), "\n";
 
     while (<SAM>) {
+
+        ## ------------------------------------------------------------------------------
         ## Read both lines (assuming unsorted BAM file)
+        ## ------------------------------------------------------------------------------
         chomp;
         my ($qname1, $flag1, $rname1, $pos1, $mapq1, $cigar1, $rnext1, $pnext1, $tlen1, $seq1, $qual1, @others1) = split("\t", $_);
         $_ = <SAM>;
@@ -148,36 +218,56 @@ sub read_bam_file {
           print join("\t", $qname2, $flag2, $rname2, $pos2, $mapq2, $cigar2, $rnext2, $pnext2, $tlen2), "\n";
         }
 
+
+        ## ------------------------------------------------------------------------------
         ## Check that both lines refer to the same read
+        ## ------------------------------------------------------------------------------
         if ($qname1 ne $qname2) {
             die "SAM file sorted or not for PE reads\n";
         }
         die "SAM file seems to have been sorted in some way. PE reads are not consecutive\n" if ($rname1 ne $rname2);
 
+
+        ## ------------------------------------------------------------------------------
         ## Check that both reads align (i.e., they have a cigar string)
+        ## ------------------------------------------------------------------------------
         if ($cigar1 eq "*" or $cigar2 eq "*") {
-            $exceptions->{"01.no_cigar"}++;
+            $stats->{"01.no_cigar"}++;
             next;
         }
 
+
+        ## ------------------------------------------------------------------------------
         ## Check that both reads are long enough
+        ## ------------------------------------------------------------------------------
         if (length($seq1) < $min_length or length($seq2) < $min_length) {
-            $exceptions->{"02.short_read"}++;
+            $stats->{"02.short_read"}++;
             next;
         }
 
+
+        ## ------------------------------------------------------------------------------
         ## Check that both reads overlap and that the overlap is long enough
+        ## ------------------------------------------------------------------------------
         my $overlap_start = $pos1>$pos2?$pos1:$pos2;
         my $overlap_end = $end1<$end2?$end1:$end2;
         if ($overlap_end < $overlap_start + $min_overlap) {
-            $exceptions->{"03.no_overlap"}++;
+            $stats->{"03.no_overlap"}++;
             next;
         }
 #        print "Overlap: $overlap_start-$overlap_end\n";
 
+
+        ## ------------------------------------------------------------------------------
+        ## Keeps a safe copy of both original sequences
+        ## ------------------------------------------------------------------------------
         my $original_seq1 = $seq1;
         my $original_seq2 = $seq2;
 
+
+        ## ------------------------------------------------------------------------------
+        ## Clip the sequence 3' of the overlap (and check that there is no mismatch nor indel)
+        ## ------------------------------------------------------------------------------
         if ($pos1 > $pos2) {
             # Clip R2
             my $diff_in_ref_bp = $pos1 - $pos2;
@@ -185,14 +275,14 @@ sub read_bam_file {
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
             if ($initial_match < $diff_in_ref_bp) {
                 # Indels in the 3' non-overlapping sequence: ignore the pair!
-                $exceptions->{"05.indel_in_3prime"}++;
+                $stats->{"05.indel_in_3prime"}++;
                 next;
             }
             ($initial_match) = $md2 =~ /^MD:Z:(\d*)/;
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
             if ($initial_match < $diff_in_ref_bp) {
                 # Indels in the 3' non-overlapping sequence: ignore the pair!
-                $exceptions->{"06.mismatch_in_3prime"}++;
+                $stats->{"06.mismatch_in_3prime"}++;
                 next;
             }
             substr($seq2, 0, $diff_in_ref_bp, "");
@@ -204,20 +294,24 @@ sub read_bam_file {
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
             if ($initial_match < $diff_in_ref_bp) {
                 # Indels in the 3' non-overlapping sequence: ignore the pair!
-                $exceptions->{"05.indel_in_3prime"}++;
+                $stats->{"05.indel_in_3prime"}++;
                 next;
             }
             ($initial_match) = $md1 =~ /^MD:Z:(\d*)/;
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
             if ($initial_match < $diff_in_ref_bp) {
                 # Indels in the 3' non-overlapping sequence: ignore the pair!
-                $exceptions->{"06.mismatch_in_3prime"}++;
+                $stats->{"06.mismatch_in_3prime"}++;
                 next;
             }
             substr($seq1, 0, $diff_in_ref_bp, "");
             print "1B $seq1\n1B $seq2\n" if ($debug);
         }
 
+
+        ## ------------------------------------------------------------------------------
+        ## Clip the sequence 5' of the overlap (and check that there is no mismatch nor indel)
+        ## ------------------------------------------------------------------------------
         if ($end1 > $end2) {
             # Clip R1
             my $diff_in_ref_bp = $end1 - $end2;
@@ -225,14 +319,14 @@ sub read_bam_file {
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
             if ($last_match < $diff_in_ref_bp) {
                 # Indels in the 3' non-overlapping sequence: ignore the pair!
-                $exceptions->{"07.indel_in_5prime"}++;
+                $stats->{"07.indel_in_5prime"}++;
                 next;
             }
             ($last_match) = $md1 =~ /(\d*)$/;
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
             if ($last_match < $diff_in_ref_bp) {
                 # Indels in the 3' non-overlapping sequence: ignore the pair!
-                $exceptions->{"08.mismatch_in_5prime"}++;
+                $stats->{"08.mismatch_in_5prime"}++;
                 next;
             }
             substr($seq1, -$diff_in_ref_bp, $diff_in_ref_bp, "");
@@ -244,28 +338,37 @@ sub read_bam_file {
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
             if ($last_match < $diff_in_ref_bp) {
                 # Indels in the 3' non-overlapping sequence: ignore the pair!
-                $exceptions->{"07.indel_in_5prime"}++;
+                $stats->{"07.indel_in_5prime"}++;
                 next;
             }
             ($last_match) = $md2 =~ /(\d*)$/;
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
             if ($last_match < $diff_in_ref_bp) {
                 # Indels in the 3' non-overlapping sequence: ignore the pair!
-                $exceptions->{"08.mismatch_in_5prime"}++;
+                $stats->{"08.mismatch_in_5prime"}++;
                 next;
             }
             substr($seq2, -$diff_in_ref_bp, $diff_in_ref_bp, "");
             print "2B $seq1\n2B $seq2\n" if ($debug);
         }
 
+
+        ## ------------------------------------------------------------------------------
+        ## Check that both sequences are identical on the overlap
+        ## ------------------------------------------------------------------------------
         if ($seq1 ne $seq2) {
-            $exceptions->{"09.mismatch_between_reads"}++;
+            $stats->{"09.mismatch_between_reads"}++;
             print "MM $seq1\nMM $seq2\n" if ($debug);
             next;
         }
 
+
+        ## ------------------------------------------------------------------------------
+        ## Classify the PE reads into DEL, INS, WT or other-mismatches. Stores the DEL and INS in
+        ## the $data_file
+        ## ------------------------------------------------------------------------------
         if ($md1 =~ /^MD:Z:\d+\^[A-Z]+\d+$/ and $md2 =~ /^MD:Z:\d+\^[A-Z]+\d+$/ and $cigar1 =~ /^\d+M\d*D\d+M$/ and $cigar2 =~ /^\d+M\d*D\d+M$/) {
-            $exceptions->{"OK:clean_deletion"}++;
+            $stats->{"OK:clean_deletion"}++;
             my ($deletion_length) = $cigar1 =~ /(\d+)D/;
 #             my ($insertion_length2) = $cigar2 =~ /(\d+)D/;
 #             my ($insertion_length3) = length(($md1 =~ /^MD:Z:\d+\^([A-Z]+)\d+$/)[0]);
@@ -278,26 +381,43 @@ sub read_bam_file {
             my $deletion_seq = substr($original_seq1, $position, $deletion_length);
             print DATA join("\t", $qname1, "DEL", $deletion_length, $position, $position + $deletion_length, $position + $deletion_length/2, $deletion_seq), "\n";
         } elsif ($md1 =~ /^MD:Z:\d+$/ and $md2 =~ /^MD:Z:\d+$/ and $cigar1 =~ /^\d+M\d*I\d+M$/ and $cigar2 =~ /^\d+M\d*I\d+M$/) { 
-            $exceptions->{"OK:clean_insertion"}++;
+            $stats->{"OK:clean_insertion"}++;
             my ($insertion_length) = $cigar1 =~ /(\d+)I/;
             my $position = ($cigar1 =~ /^(\d+)M/)[0] + $pos1;
             my $insertion_seq = substr($original_seq1, $position, $insertion_length);
             print DATA join("\t", $qname1, "INS", $insertion_length, $position + 1, $position, $position + 1/2, $insertion_seq), "\n";
         } elsif ($md1 =~ /^MD:Z:\d+$/ and $md2 =~ /^MD:Z:\d+$/ and $cigar1 =~ /^\d+M$/ and $cigar2 =~ /^\d+M$/) {
-            $exceptions->{"OK:WILD-TYPE"}++;
+            $stats->{"OK:WILD-TYPE"}++;
             next;
         } else {
 #             print join("\t", $cigar1, $md1, $cigar2, $md2), "\n";
-            $exceptions->{"10.other_mismatches"}++;
+            $stats->{"10.other_mismatches"}++;
             next;
         }
+
     }
     close(SAM);
     close(DATA);
 
-    return ($data_file, $exceptions);
+    return ($data_file, $stats);
 }
 
+
+=head2 write_R_script
+
+  Arg[1]        : string $label
+  Arg[2]        : string $data_filename
+  Arg[3]        : arrayref $top_sequences
+  Arg[4]        : num $wt
+  Arg[5]        : string $output_pdf_file
+  Example       : my $R_file = write_R_script("test", "file.bam.data.txt", $top_sequences, 3123,
+                  "test.pdf")
+  Description   : Creates an R script to plot all the insertions and deletions in PDF, PNG and SVG
+                  format
+  Returns       : string with the filename with the resulting R code
+  Exceptions    : 
+
+=cut
 
 sub write_R_script {
     my ($label, $data_file, $top_sequences, $wt, $output_pdf_file) = @_;
