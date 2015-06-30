@@ -284,10 +284,26 @@ open(R, "|R --vanilla --slave") or die;
 print R "
 data <- read.table('$data_file', header=T, row.names=1)
 
+# =============================================================================
+#  Subset data frame
+# =============================================================================
+#  Get new dataframes, one for deletions and one for insertions. The read name
+#  was read as the row name. In this case, we skip the first column which
+#  contains the type of event (either DEL or INS)
+# =============================================================================
 data.del <- subset(data, event=='DEL', select=2:ncol(data))
-
 data.ins <- subset(data, event=='INS', select=2:ncol(data))
 
+
+# =============================================================================
+#  Number of events
+# =============================================================================
+#  Number of WT events is taken from the \$wt Perl variable, while the number of deletions
+#  and insertions is taken from the number of rows for the deletions and insertion data frame
+#  subsets respecively.
+#
+#  Also obtain the corresponding percentages (w.r.t. OK sequences only)
+# =============================================================================
 num.wt = $wt
 num.del = dim(data.del)[1]
 num.ins = dim(data.ins)[1]
@@ -297,20 +313,34 @@ perc.wt = paste0(format(100*num.wt/num.total, digits=3),'%')
 perc.del = paste0(format(100*num.del/num.total, digits=3),'%')
 perc.ins = paste0(format(100*num.ins/num.total, digits=3),'%')
 
+
+# =============================================================================
+#  FUNCTION plot.size.histograms
+# =============================================================================
+#  This method plots 3 histograms, one for deletions, one for insertions and
+#  one with both deletions and insertions as a 'mirror' plot.
+#
+#  The histograms are for the lengths (sizes) of the deletions and insertions.
+# =============================================================================
 plot.size.histograms <- function(data.del, data.ins, sub) {
-    col.del = rgb(0.8,0,0)
-    col.ins = rgb(1,0.5,0.5)
+    ### Use same breaks (x-axis) for all 3 plots. Make sure the range goes from 1-10 at least.
     breaks = (min(data.del[,1],data.ins[,1],1)-1):max(data.del[,1], data.ins[,1], 10)
 
+    ### Get the histograms for deletions and insertions, using the set breaks. Store the
+    ### result instead of plotting it.
     h.del = hist(data.del[,1], breaks=breaks, plot=F);
     h.ins = hist(data.ins[,1], breaks=breaks, plot=F);
+
+    ### Cosmetic variables
+    col.del = rgb(0.8,0,0)
+    col.ins = rgb(1,0.5,0.5)
     ylim.max = max(h.del\$counts, h.ins\$counts)
     xlim = c(min(h.del\$breaks)+1,max(h.del\$breaks))
     xlab.del = paste0('Deletion sizes (n = ', num.del, '; ', perc.del, ')')
     xlab.ins = paste0('Insertion sizes (n = ', num.ins, '; ', perc.ins, ')')
     ylab='counts'
 
-    # Deletions only
+    ### Plot histogram for deletions only (if any)
     main=paste0('Histogram of Deletion sizes (', '$label', ')')
     if (num.del > 0) {
         plot(h.del\$counts, xlim=xlim, type='n', xlab=xlab.del, ylab=ylab, main=main)
@@ -320,7 +350,7 @@ plot.size.histograms <- function(data.del, data.ins, sub) {
         text(0, 0, labels=c('No deletions'))
     }
 
-    # Insertions only
+    ### Plot histogram for insertions only (if any)
     main=paste0('Histogram of Insertion sizes (', '$label', ')')
     if (num.ins > 0) {
         plot(h.del\$counts, xlim=xlim, type='n', xlab=xlab.del, ylab=ylab, main=main)
@@ -330,23 +360,40 @@ plot.size.histograms <- function(data.del, data.ins, sub) {
         text(0, 0, labels=c('No insertions'))
     }
 
-    # Both Deletion and Insertions (as a mirror plot)
+    ### Plot histograms for both Deletion and Insertions (as a mirror plot)
+    # Change the margins to make room for the upper axis + label + title
     mar = par('mar')
     par('mar' = c(mar[1]-0.5, mar[2], mar[3]+3, mar[4]))
+    # Plot the data
     plot(h.del\$counts, xlim=xlim, type='n', xlab=NA, ylab=ylab,
         main=NA, ylim=c(-ylim.max, ylim.max));
-    axis(3)
-    mtext(paste0('Histogram of event sizes (', '$label', ')'), side=3, line = 5, cex=1.2, font=2)
-    mtext(xlab.del, side=3, line = 2.5)
-    mtext(xlab.ins, side=1, line = 2.5)
     rect(h.del\$mids, 0, h.del\$mids+1, h.del\$counts, col=col.del)
     rect(h.ins\$mids, 0, h.ins\$mids+1, -h.ins\$counts, col=col.ins)
+    # Add the top axis
+    axis(3)
+    # Write the main title (as an mtext so we can have it a little higher than by default)
+    mtext(paste0('Histogram of event sizes (', '$label', ')'), side=3, line = 5, cex=1.2, font=2)
+    # Write the labels for the top and bottom x-axes
+    mtext(xlab.del, side=3, line = 2.5)
+    mtext(xlab.ins, side=1, line = 2.5)
+    # Reset margins to previous value
     par('mar' = mar)
 }
 
-plot.location.histograms <- function(data.del, data.ins, sub) {
-    col.del = rgb(0,0,0.8)
-    col.ins = rgb(0.5,0.5,1)
+
+# =============================================================================
+#  FUNCTION plot.location.images
+# =============================================================================
+#  This method plots 3 histograms, one for deletions, one for insertions and
+#  one with both deletions and insertions as a 'mirror' plot. It then plots
+#  2 scatter plots (location vs length/size of the event), one for deletions
+#  and the other for insertions.
+#
+#  The histograms are for the location of the mid-point of the deletions and
+#  insertions.
+# =============================================================================
+plot.location.images <- function(data.del, data.ins, sub) {
+    ### Use same breaks (x-axis) for all 3 plots. Make sure the range spans at least 10 bp.
     breaks = (min(data.del[,4],data.ins[,4])-1):max(data.del[,4], data.ins[,4])+1
     while (length(breaks) < 10) {
         if (breaks[1] > 0) {
@@ -354,15 +401,22 @@ plot.location.histograms <- function(data.del, data.ins, sub) {
         }
         breaks = c(breaks, breaks[length(breaks)]+1)
     }
+
+    ### Get the histograms for deletions and insertions, using the set breaks. Store the
+    ### result instead of plotting it.
     h.del = hist(data.del[,4], breaks=breaks, plot=F);
     h.ins = hist(data.ins[,4], breaks=breaks, plot=F);
+
+    ### Cosmetic variables
+    col.del = rgb(0,0,0.8)
+    col.ins = rgb(0.5,0.5,1)
     ylim.max = 1.04*max(h.del\$counts, h.ins\$counts)
     xlim = c(breaks[1],breaks[length(breaks)])
     xlab.del = paste0('Location of Deletions (n = ', num.del, '; ', perc.del, ')')
     xlab.ins = paste0('Location of Insertions (n = ', num.ins, '; ', perc.ins, ')')
     ylab='counts'
 
-    # Deletions only
+    ### Plot histogram for deletions only (if any)
     main=paste0('Midpoint location of the deletions (', '$label', ')')
     if (num.del > 0) {
         plot(h.del\$counts, xlim=xlim, type='n', xlab=xlab.del, ylab=ylab, main=main)
@@ -372,7 +426,7 @@ plot.location.histograms <- function(data.del, data.ins, sub) {
         text(0, 0, labels=c('No deletions'))
     }
 
-    # Insertions only
+    ### Plot histogram for insertions only (if any)
     main=paste0('Midpoint location of the insertions (', '$label', ')')
     if (num.ins) {
         plot(h.ins\$counts, xlim=xlim, type='n', xlab=xlab.del, ylab=ylab, main=main)
@@ -382,19 +436,27 @@ plot.location.histograms <- function(data.del, data.ins, sub) {
         text(0, 0, labels=c('No insertions'))
     }
 
-    # Both Deletion and Insertions (as a mirror plot)
+    ### Plot histograms for both Deletion and Insertions (as a mirror plot)
+    # Change the margins to make room for the upper axis + label + title
     mar = par('mar')
     par('mar' = c(mar[1]-0.5, mar[2], mar[3]+3, mar[4]))
+    # Plot the data
     plot(h.del\$counts, xlim=xlim, type='n', xlab=NA, ylab=ylab,
         main=NA, ylim=c(-ylim.max, ylim.max));
-    axis(3)
-    mtext(paste0('Midpoint location (', '$label', ')'), side=3, line = 5, cex=1.2, font=2)
-    mtext(xlab.del, side=3, line = 2.5)
-    mtext(xlab.ins, side=1, line = 2.5)
     rect(h.del\$mids, 0, h.del\$mids+1, h.del\$counts, col=col.del)
     rect(h.ins\$mids, 0, h.ins\$mids+1, -h.ins\$counts, col=col.ins)
+    # Add the top axis
+    axis(3)
+    # Write the main title (as an mtext so we can have it a little higher than by default)
+    mtext(paste0('Midpoint location (', '$label', ')'), side=3, line = 5, cex=1.2, font=2)
+    # Write the labels for the top and bottom x-axes
+    mtext(xlab.del, side=3, line = 2.5)
+    mtext(xlab.ins, side=1, line = 2.5)
+    # Reset margins to previous value
     par('mar' = mar)
 
+
+    ### Plot the scatter plot for deletions (if any). Uses the same x-axis as the other plots
     main = paste0('Scatter plot of Deletions sizes vs Midpoint location (', '$label', ')')
     if (num.del > 0) {
         smoothScatter(data.del[,4], data.del[,1], xlim=xlim,
@@ -404,6 +466,7 @@ plot.location.histograms <- function(data.del, data.ins, sub) {
         text(0, 0, labels=c('No deletions'))
     }
     
+    ### Plot the scatter plot for insertions (if any). Uses the same x-axis as the other plots
     main = paste0('Scatter plot of Insertion sizes vs Midpoint location (', '$label', ')')
     if (num.ins > 0) {
         smoothScatter(data.ins[,4], data.ins[,1], xlim=xlim,
@@ -414,19 +477,41 @@ plot.location.histograms <- function(data.del, data.ins, sub) {
     }
 }
 
+
+# =============================================================================
+#  FUNCTION plot.deletions.frequencies
+# =============================================================================
+#  This method plots a histogram showing the number of times a given basepair
+#  from the wild-type sequence has been deleted. That number is a sum across
+#  sequences with a clean deletion.
+# =============================================================================
 plot.deletion.frequencies <- function(data, sub) {
+    ### Create a new data.frame with the from and to values
     range = data.frame(from=data[,2], to=data[,3])
+
+    ### Create a vector to store the number of times each bp has been deleted
     del <- vector(mode='numeric', length=max(data[,3]))
     for (i in 1:dim(range)[1]) { for (p in range[i,1]:range[i,2]) { del[p] <- del[p]+1 } }
+
+    ### Genereate the plot
+    # empty plot
     plot(del, xlim=c(min(range\$from-1),max(range\$to)+1), type='n',
         main=paste0('Frequency of deletion per bp (', '$label', ')'),
         sub=sub, xlab='Location', ylab='counts')
+    # add light blue rectangles with white background
     rect(min(range\$from):max(range\$to)-0.5, 0, min(range\$from):max(range\$to)+0.5,
         del[min(range\$from):max(range\$to)], col='lightblue', border='white')
+    # add a black line around the profile of deletion frequencies
     lines(min(range\$from):max(range\$to)-0.5,
         del[min(range\$from):max(range\$to)], type='s', col='black')
 }
 
+
+# =============================================================================
+#  FUNCTION plot.pie.chart
+# =============================================================================
+#  This method plots a pie chart with the number of WT, DEL and INS sequences
+# =============================================================================
 plot.pie.chart <- function() {
     pie(c(num.wt, num.del, num.ins), labels=c('WT','DEL','INS'), main=paste0('Summary (', '$label', ')'))
     mtext(paste0('Wild-type (n = ', num.wt, '; ', perc.wt, ')'), side=1, line=0)
@@ -434,21 +519,40 @@ plot.pie.chart <- function() {
     mtext(paste0('Insertions (n = ', num.ins, '; ', perc.ins, ')'), side=1, line=2)
 }
 
+
+# =============================================================================
+#  FUNCTION plot.top.seqs
+# =============================================================================
+#  This method plots the most common INS and DEL. The strings are extracted
+#  from the \@top_sequences Perl variable
+# =============================================================================
 plot.topseqs <- function(data, sub) {
+    ### Use smaller top and bottom margins
     mar = par('mar')
     par('mar' = c(mar[1],1,mar[3],1))
+    ### Initiate plot
     plot(NA,xlim=c(0,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA,
         main=paste0('Most common events (', '$label', ')'))
+    ### Add text
     text(0, 1-1:$num_lines/25, cex=0.4, adj=0, family='mono', labels=c('", join("', '", @top_sequences), "'))
 }
 
+
+# =============================================================================
+#  FUNCTION plot.figures
+# =============================================================================
+#  This method calls all the previous methods to draw all the figures in order.
+#  The advantage of having this method is that we can now easily create a PDF
+#  as well as a set of PNG and SVG files (see below)
+# =============================================================================
 plot.figures <- function() {
+    ### Check that there are data to be plotted
     if (num.del+num.ins > 0) {
     
         sub = paste0(num.del, ' deletions / $wt wild-type = ', format(100*num.del/(num.del+num.wt), digits=3),'%')
 
         plot.size.histograms(data.del, data.ins, sub)
-        plot.location.histograms(data.del, data.ins, sub)
+        plot.location.images(data.del, data.ins, sub)
         plot.deletion.frequencies(data.del, sub)
         plot.pie.chart()
 
@@ -457,17 +561,24 @@ plot.figures <- function() {
         text(0, 0, labels=c('No events to plot'))
     }
     plot.topseqs(data.del, sub)
-
 }
 
+# =============================================================================
+#  Create and save the plots
+# =============================================================================
+#  Here the plots are created and saved to a PDF file , then to a set of PNG
+#  files and finally to a set of SVG files.
+# =============================================================================
 pdf('$output_R_file')
 plot.figures();
 dev.off()
 
+# Substitute the .pdf extension by %02d.png (to create several files like 01, 02, etc)
 png(sub('.pdf', '.%02d.png', '$output_R_file'))
 plot.figures();
 dev.off()
 
+# Substitute the .pdf extension by %02d.svg (to create several files like 01, 02, etc)
 svg(sub('.pdf', '.%02d.svg', '$output_R_file'))
 plot.figures();
 dev.off()
