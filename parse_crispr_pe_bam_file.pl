@@ -17,6 +17,9 @@ Description:
 This script reads a bam file with PE reads and check that the reads overlap and that they match on
 the overlap. All pairs that pass these check are used to look for insertions and deletions.
 
+The output is a set of PDF, PNG, SVG and TXT files with the result of the analysis, mostly different
+plots showing the different deletions and the list of the most common deletions.
+
 Options:
 --help: shows this help
 --debug: output debugging information
@@ -50,7 +53,7 @@ open(IN_SAM, "samtools view $input_bam_file |") or die;
 
 my $data_file = "$input_bam_file.data.txt";
 open(DATA, ">$data_file");
-print DATA join("\t", "read", "deletion_length", "from", "to", "midpoint"), "\n";
+print DATA join("\t", "read", "event", "event_length", "from", "to", "midpoint", "seq"), "\n";
 
 my $exceptions;
 while (<IN_SAM>) {
@@ -190,12 +193,14 @@ while (<IN_SAM>) {
 #         die if ($insertion_length != $insertion_length3);
 #         die if ($insertion_length != $insertion_length4);
         my $position = ($cigar1 =~ /^(\d+)M/)[0] + $pos1;
-        print DATA join("\t", $qname1, $deletion_length, $position, $position + $deletion_length, $position + $deletion_length/2), "\n";
+        my $deletion_seq = substr($original_seq1, $position, $deletion_length);
+        print DATA join("\t", $qname1, "DEL", $deletion_length, $position, $position + $deletion_length, $position + $deletion_length/2, $deletion_seq), "\n";
     } elsif ($md1 =~ /^MD:Z:\d+$/ and $md2 =~ /^MD:Z:\d+$/ and $cigar1 =~ /^\d+M\d*I\d+M$/ and $cigar2 =~ /^\d+M\d*I\d+M$/) { 
         $exceptions->{"OK:clean_insertion"}++;
         my ($insertion_length) = $cigar1 =~ /(\d+)I/;
         my $position = ($cigar1 =~ /^(\d+)M/)[0] + $pos1;
-        print DATA join("\t", $qname1, -$insertion_length, $position, $position + 1, $position + 1/2), "\n";
+        my $insertion_seq = substr($original_seq1, $position, $insertion_length);
+        print DATA join("\t", $qname1, "INS", $insertion_length, $position + 1, $position, $position + 1/2, $insertion_seq), "\n";
     } elsif ($md1 =~ /^MD:Z:\d+$/ and $md2 =~ /^MD:Z:\d+$/ and $cigar1 =~ /^\d+M$/ and $cigar2 =~ /^\d+M$/) {
         $exceptions->{"OK:WILD-TYPE"}++;
         next;
@@ -216,8 +221,9 @@ foreach my $key (sort keys %$exceptions) {
 }
 print "TOTAL: $total\n";
 
-my $wt = $exceptions->{"OK:WILD-TYPE"};
+my $wt = ($exceptions->{"OK:WILD-TYPE"} or 0);
 
+my $wt_sequence;
 my @top_sequences;
 if ($ref_seq_file) {
     open(REF, $ref_seq_file) or die;
@@ -228,52 +234,184 @@ if ($ref_seq_file) {
         $ref_seq .= $_;
     }
 
-    my @lines = qx"more $data_file | grep -v 'deletion_length' | cut -f 2,3 | grep -v -e '-' | sort | uniq -c | sort -rn | head -n 5";
+    my @del_lines = qx"more $data_file | awk '\$2 == \"DEL\" { print \$3, \$4, \$7}' | sort | uniq -c | sort -rn | head -n 10";
+    my @ins_lines = qx"more $data_file | awk '\$2 == \"INS\" { print \$3, \$4, \$7}' | sort | uniq -c | sort -rn | head -n 10";
     my $min_from;
     my $max_to;
-    foreach my $this_line (@lines) {
-        my ($num, $del_length, $from) = $this_line =~ /(\d+)\s(\d+)\s(\d+)/;
+    my $longest_seq = 0;
+    foreach my $this_line (@del_lines) {
+        my ($num, $del_length, $from, $seq) = $this_line =~ /(\d+)\s(\-?\d+)\s(\d+)\s(\w+)/;
         $min_from = $from if (!$min_from or $from < $min_from);
         $max_to = $from+$del_length if (!$max_to or $from+$del_length > $max_to);
+        $longest_seq = length($seq) if ($longest_seq < length($seq));
+    }
+    foreach my $this_line (@ins_lines) {
+        my ($num, $ins_length, $from, $seq) = $this_line =~ /(\d+)\s(\-?\d+)\s(\d+)\s(\w+)/;
+        $min_from = $from-1 if (!$min_from or $from-1 < $min_from);
+        $max_to = $from if (!$max_to or $from > $max_to);
+        $longest_seq = length($seq)+2 if ($longest_seq < length($seq)+2);
     }
     $min_from -= 21;
     $max_to += 19;
-    print "\n";
-    push(@top_sequences, sprintf("%s %7d %3s %10s", substr($ref_seq, $min_from, $max_to-$min_from), $wt, "0", "WILD-TYPE"));
-    foreach my $this_line (@lines) {
-        my ($num, $del_length, $from) = $this_line =~ /(\d+)\s(\d+)\s(\d+)/;
-        my $seq = substr($ref_seq, $min_from, $from-$min_from-1) . '-'x$del_length . substr($ref_seq, ($from+$del_length-1), $max_to - ($from+$del_length-1));
-        push(@top_sequences, sprintf("%s %7d %3s %10s", $seq, $num, $del_length, $from));
+
+    my $format = "\%-".($max_to-$min_from)."s \%7s \%4s \%3s \%6s \%-${longest_seq}s";
+    my $header = sprintf($format, "Sequence" , "Num", "TYPE", "L", "POS", "Diff");
+    my $wt_sequence = sprintf($format, substr($ref_seq, $min_from, $max_to-$min_from), $wt, "W-T", 0, "NA", "");
+
+    @top_sequences = ($header, "", $wt_sequence, "");
+
+    foreach my $this_line (@del_lines) {
+        my ($num, $del_length, $from, $seq) = $this_line =~ /(\d+)\s(\-?\d+)\s(\d+)\s(\w+)/;
+        my $aligned_seq = substr($ref_seq, $min_from, $from-$min_from-1) . '-'x$del_length . substr($ref_seq, ($from+$del_length-1), $max_to - ($from+$del_length-1));
+        push(@top_sequences, sprintf($format, $aligned_seq, $num, "DEL", $del_length, $from, $seq));
     }
-    print join("\n", @top_sequences), "\n";
+    push(@top_sequences, "");
+    foreach my $this_line (@ins_lines) {
+        my ($num, $ins_length, $from, $seq) = $this_line =~ /(\d+)\s(\-?\d+)\s(\d+)\s(\w+)/;
+        my $aligned_seq = substr($ref_seq, $min_from, $max_to-$min_from);
+        substr($aligned_seq, $from-$min_from-2, 2, "><");
+        push(@top_sequences, sprintf($format, $aligned_seq, $num, "INS", $ins_length, $from, ">$seq<"));
+    }
+    
+
+    print "\n", join("\n", @top_sequences), "\n";
 }
 
-my $num = @top_sequences;
+my $num_lines = @top_sequences;
 
 open(R, "|R --vanilla --slave") or die;
 
 print R "
 data <- read.table('$data_file', header=T, row.names=1)
 
-data <- subset(data, deletion_length > 0)
+data.del <- subset(data, event=='DEL', select=2:ncol(data))
 
-del = dim(data)[1]
-wt = $wt
+data.ins <- subset(data, event=='INS', select=2:ncol(data))
 
-plot.deletion.sizes <- function(data, sub) {
-    h = hist(data[,1], breaks=(min(data[,1])-1):max(data[,1]), plot=F);
-    plot(h\$counts, xlim=c(min(h\$breaks)+1,max(h\$breaks)), type='n',
-        main=paste0('Histogram of Deletion sizes (', '$label', ')'),
-        sub=sub, xlab='Deletion size', ylab='counts');
-    rect(h\$mids, 0, h\$mids+1, h\$counts, col='red')
+num.wt = $wt
+num.del = dim(data.del)[1]
+num.ins = dim(data.ins)[1]
+num.total = num.wt + num.del + num.ins
+
+perc.wt = paste0(format(100*num.wt/num.total, digits=3),'%')
+perc.del = paste0(format(100*num.del/num.total, digits=3),'%')
+perc.ins = paste0(format(100*num.ins/num.total, digits=3),'%')
+
+plot.size.histograms <- function(data.del, data.ins, sub) {
+    col.del = rgb(0.8,0,0)
+    col.ins = rgb(1,0.5,0.5)
+    breaks = (min(data.del[,1],data.ins[,1],1)-1):max(data.del[,1], data.ins[,1], 10)
+
+    h.del = hist(data.del[,1], breaks=breaks, plot=F);
+    h.ins = hist(data.ins[,1], breaks=breaks, plot=F);
+    ylim.max = max(h.del\$counts, h.ins\$counts)
+    xlim = c(min(h.del\$breaks)+1,max(h.del\$breaks))
+    xlab.del = paste0('Deletion sizes (n = ', num.del, '; ', perc.del, ')')
+    xlab.ins = paste0('Insertion sizes (n = ', num.ins, '; ', perc.ins, ')')
+    ylab='counts'
+
+    # Deletions only
+    main=paste0('Histogram of Deletion sizes (', '$label', ')')
+    if (num.del > 0) {
+        plot(h.del\$counts, xlim=xlim, type='n', xlab=xlab.del, ylab=ylab, main=main)
+        rect(h.del\$mids, 0, h.del\$mids+1, h.del\$counts, col=col.del)
+    } else {
+        plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
+        text(0, 0, labels=c('No deletions'))
+    }
+
+    # Insertions only
+    main=paste0('Histogram of Insertion sizes (', '$label', ')')
+    if (num.ins > 0) {
+        plot(h.del\$counts, xlim=xlim, type='n', xlab=xlab.del, ylab=ylab, main=main)
+        rect(h.ins\$mids, 0, h.ins\$mids+1, h.ins\$counts, col=col.ins)
+    } else {
+        plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
+        text(0, 0, labels=c('No insertions'))
+    }
+
+    # Both Deletion and Insertions (as a mirror plot)
+    mar = par('mar')
+    par('mar' = c(mar[1]-0.5, mar[2], mar[3]+3, mar[4]))
+    plot(h.del\$counts, xlim=xlim, type='n', xlab=NA, ylab=ylab,
+        main=NA, ylim=c(-ylim.max, ylim.max));
+    axis(3)
+    mtext(paste0('Histogram of event sizes (', '$label', ')'), side=3, line = 5, cex=1.2, font=2)
+    mtext(xlab.del, side=3, line = 2.5)
+    mtext(xlab.ins, side=1, line = 2.5)
+    rect(h.del\$mids, 0, h.del\$mids+1, h.del\$counts, col=col.del)
+    rect(h.ins\$mids, 0, h.ins\$mids+1, -h.ins\$counts, col=col.ins)
+    par('mar' = mar)
 }
 
-plot.deletion.locations <- function(data, sub) {
-    h = hist(data[,4], breaks=(min(data[,4])-1):(max(data[,4])+1), plot=F);
-    plot(h\$counts, xlim=c(min(h\$breaks)+1,max(h\$breaks)), type='n',
-        main=paste0('Midpoint location of the deletion (', '$label', ')'),
-        sub=sub, xlab='Location', ylab='counts');
-    rect(h\$mids, 0, h\$mids+1, h\$counts, col='blue')
+plot.location.histograms <- function(data.del, data.ins, sub) {
+    col.del = rgb(0,0,0.8)
+    col.ins = rgb(0.5,0.5,1)
+    breaks = (min(data.del[,4],data.ins[,4])-1):max(data.del[,4], data.ins[,4])+1
+    while (length(breaks) < 10) {
+        if (breaks[1] > 0) {
+            breaks = c(breaks[1]-1, breaks)
+        }
+        breaks = c(breaks, breaks[length(breaks)]+1)
+    }
+    h.del = hist(data.del[,4], breaks=breaks, plot=F);
+    h.ins = hist(data.ins[,4], breaks=breaks, plot=F);
+    ylim.max = 1.04*max(h.del\$counts, h.ins\$counts)
+    xlim = c(breaks[1],breaks[length(breaks)])
+    xlab.del = paste0('Location of Deletions (n = ', num.del, '; ', perc.del, ')')
+    xlab.ins = paste0('Location of Insertions (n = ', num.ins, '; ', perc.ins, ')')
+    ylab='counts'
+
+    # Deletions only
+    main=paste0('Midpoint location of the deletions (', '$label', ')')
+    if (num.del > 0) {
+        plot(h.del\$counts, xlim=xlim, type='n', xlab=xlab.del, ylab=ylab, main=main)
+        rect(h.del\$mids, 0, h.del\$mids+1, h.del\$counts, col=col.del)
+    } else {
+        plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
+        text(0, 0, labels=c('No deletions'))
+    }
+
+    # Insertions only
+    main=paste0('Midpoint location of the insertions (', '$label', ')')
+    if (num.ins) {
+        plot(h.ins\$counts, xlim=xlim, type='n', xlab=xlab.del, ylab=ylab, main=main)
+        rect(h.ins\$mids, 0, h.ins\$mids+1, h.ins\$counts, col=col.ins)
+    } else {
+        plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
+        text(0, 0, labels=c('No insertions'))
+    }
+
+    # Both Deletion and Insertions (as a mirror plot)
+    mar = par('mar')
+    par('mar' = c(mar[1]-0.5, mar[2], mar[3]+3, mar[4]))
+    plot(h.del\$counts, xlim=xlim, type='n', xlab=NA, ylab=ylab,
+        main=NA, ylim=c(-ylim.max, ylim.max));
+    axis(3)
+    mtext(paste0('Midpoint location (', '$label', ')'), side=3, line = 5, cex=1.2, font=2)
+    mtext(xlab.del, side=3, line = 2.5)
+    mtext(xlab.ins, side=1, line = 2.5)
+    rect(h.del\$mids, 0, h.del\$mids+1, h.del\$counts, col=col.del)
+    rect(h.ins\$mids, 0, h.ins\$mids+1, -h.ins\$counts, col=col.ins)
+    par('mar' = mar)
+
+    main = paste0('Scatter plot of Deletions sizes vs Midpoint location (', '$label', ')')
+    if (num.del > 0) {
+        smoothScatter(data.del[,4], data.del[,1], xlim=xlim,
+            main=main, xlab=xlab.del, ylab='Deletion size');
+    } else {
+        plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
+        text(0, 0, labels=c('No deletions'))
+    }
+    
+    main = paste0('Scatter plot of Insertion sizes vs Midpoint location (', '$label', ')')
+    if (num.ins > 0) {
+        smoothScatter(data.ins[,4], data.ins[,1], xlim=xlim,
+            main=main, xlab=xlab.ins, ylab='Insertion size');
+    } else {
+        plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
+        text(0, 0, labels=c('No insertions'))
+    }
 }
 
 plot.deletion.frequencies <- function(data, sub) {
@@ -289,37 +427,37 @@ plot.deletion.frequencies <- function(data, sub) {
         del[min(range\$from):max(range\$to)], type='s', col='black')
 }
 
-plot.deletion.scatter <- function(data, sub) {
-    smoothScatter(data[,4], data[,1],
-        main=paste0('Scatter plot of Deletions sizes vs Midpoint location (', '$label', ')'),
-        sub=sub, xlab='Location', ylab='Deletion size');
+plot.pie.chart <- function() {
+    pie(c(num.wt, num.del, num.ins), labels=c('WT','DEL','INS'), main=paste0('Summary (', '$label', ')'))
+    mtext(paste0('Wild-type (n = ', num.wt, '; ', perc.wt, ')'), side=1, line=0)
+    mtext(paste0('Deletions (n = ', num.del, '; ', perc.del, ')'), side=1, line=1)
+    mtext(paste0('Insertions (n = ', num.ins, '; ', perc.ins, ')'), side=1, line=2)
 }
 
-plot.deletion.topseqs <- function(data, sub) {
+plot.topseqs <- function(data, sub) {
     mar = par('mar')
     par('mar' = c(mar[1],1,mar[3],1))
-    plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA,
-        main=paste0('Most common deletions (', '$label', ')'))
-    text(0, 0.3-1:$num/15, cex=0.7, family='mono', labels=c(''))
-    text(0, 0.3-1:$num/15, cex=0.7, family='mono', labels=c('", join("', '", @top_sequences), "'))
+    plot(NA,xlim=c(0,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA,
+        main=paste0('Most common events (', '$label', ')'))
+    text(0, 1-1:$num_lines/25, cex=0.4, adj=0, family='mono', labels=c('", join("', '", @top_sequences), "'))
 }
 
 plot.figures <- function() {
-    if (del > 3) {
-        sub = paste0(del, ' deletions / $wt wild-type = ', format(100*del/(del+wt), digits=3),'%')
+    if (num.del+num.ins > 0) {
+    
+        sub = paste0(num.del, ' deletions / $wt wild-type = ', format(100*num.del/(num.del+num.wt), digits=3),'%')
 
-        plot.deletion.sizes(data, sub)
-        plot.deletion.locations(data, sub)
-        plot.deletion.frequencies(data, sub)
-        plot.deletion.scatter(data, sub)
+        plot.size.histograms(data.del, data.ins, sub)
+        plot.location.histograms(data.del, data.ins, sub)
+        plot.deletion.frequencies(data.del, sub)
+        plot.pie.chart()
 
     } else {
         plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main='$label')
-        text(0, 0, labels=c('Not enough deletions for generating plots'))
+        text(0, 0, labels=c('No events to plot'))
     }
-    if ($num > 1) {
-        plot.deletion.topseqs(data, sub)
-    }
+    plot.topseqs(data.del, sub)
+
 }
 
 pdf('$output_R_file')
@@ -337,3 +475,5 @@ dev.off()
 ";
 
 close(R);
+
+
