@@ -605,7 +605,8 @@ plot.location.images <- function(data.del, data.ins) {
     ### Plot the scatter plot for deletions (if any). Uses the same x-axis as the other plots
     main = paste0('Scatter plot of Deletions sizes vs Midpoint location (', '$label', ')')
     if (num.del > 0) {
-        smoothScatter(data.del[,4], data.del[,1], xlim=xlim,
+        ylim = c(0,max(data.del[,1],10))
+        smoothScatter(data.del[,4], data.del[,1], xlim=xlim, ylim=ylim,
             main=main, xlab=xlab.del, ylab='Deletion size');
     } else {
         plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
@@ -615,6 +616,8 @@ plot.location.images <- function(data.del, data.ins) {
     ### Plot the scatter plot for insertions (if any). Uses the same x-axis as the other plots
     main = paste0('Scatter plot of Insertion sizes vs Midpoint location (', '$label', ')')
     if (num.ins > 0) {
+        ylim = c(0,max(data.ins[,1],10))
+        smoothScatter(data.ins[,4], data.ins[,1], xlim=xlim, ylim=ylim,
         smoothScatter(data.ins[,4], data.ins[,1], xlim=xlim,
             main=main, xlab=xlab.ins, ylab='Insertion size');
     } else {
