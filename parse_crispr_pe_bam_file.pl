@@ -123,6 +123,7 @@ sub get_top_sequences {
         $longest_seq = length($seq)+2 if ($longest_seq < length($seq)+2);
     }
     $min_from -= 21;
+    $min_from = 0 if ($min_from < 0);
     $max_to += 19;
 
     ## ------------------------------------------------------------------------------
