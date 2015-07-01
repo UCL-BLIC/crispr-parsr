@@ -619,7 +619,6 @@ plot.location.images <- function(data.del, data.ins) {
     if (num.ins > 0) {
         ylim = c(0,max(data.ins[,1],10))
         smoothScatter(data.ins[,4], data.ins[,1], xlim=xlim, ylim=ylim,
-        smoothScatter(data.ins[,4], data.ins[,1], xlim=xlim,
             main=main, xlab=xlab.ins, ylab='Insertion size');
     } else {
         plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
