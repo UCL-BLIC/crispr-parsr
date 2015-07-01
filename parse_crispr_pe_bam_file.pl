@@ -662,7 +662,7 @@ plot.deletion.frequencies <- function(data) {
 #  This method plots a pie chart with the number of WT, DEL and INS sequences
 # =============================================================================
 plot.pie.chart <- function() {
-    pie(c(num.wt, num.del, num.ins), labels=c('WT','DEL','INS'), main=paste0('Summary (', '$label', ')'))
+    pie(c(num.wt, num.del, num.ins), labels=c('WT','DEL','INS'), main=paste0('Summary of events (', '$label', ')'))
     mtext(paste0('Wild-type (n = ', num.wt, '; ', perc.wt, ')'), side=1, line=0)
     mtext(paste0('Deletions (n = ', num.del, '; ', perc.del, ')'), side=1, line=1)
     mtext(paste0('Insertions (n = ', num.ins, '; ', perc.ins, ')'), side=1, line=2)
@@ -695,13 +695,15 @@ plot.topseqs <- function(data) {
 #  as well as a set of PNG and SVG files (see below)
 # =============================================================================
 plot.figures <- function() {
+
+    plot.pie.chart()
+
     ### Check that there are data to be plotted
     if (num.del+num.ins > 0) {
     
         plot.size.histograms(data.del, data.ins)
         plot.location.images(data.del, data.ins)
         plot.deletion.frequencies(data.del)
-        plot.pie.chart()
 
     } else {
         plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main='$label')
