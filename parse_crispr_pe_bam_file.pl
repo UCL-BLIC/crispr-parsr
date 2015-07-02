@@ -27,6 +27,53 @@ Options:
 
 };
 
+my $STAT_NO_ALIGNMENT = "No alignment";
+my $STAT_SHORT_READ = "Short read";
+my $STAT_NO_OVERLAP = "No overlap";
+my $STAT_INDEL_5_PRIME = "5' indel";
+my $STAT_MUTATION_5_PRIME = "5' mut";
+my $STAT_INDEL_3_PRIME = "3' indel";
+my $STAT_MUTATION_3_PRIME = "3' mut";
+my $STAT_READ_MISMATCH = "Reads differ";
+my $STAT_OTHER_MISMATCHES = "Other mismatches";
+my $STAT_OK_WILD_TYPE = "WT";
+my $STAT_OK_DELETION = "DEL";
+my $STAT_OK_INSERTION = "INS";
+
+
+my @STAT_ORDER = (
+    $STAT_NO_ALIGNMENT,
+    $STAT_SHORT_READ,
+    $STAT_NO_OVERLAP,
+    $STAT_INDEL_5_PRIME,
+    $STAT_MUTATION_5_PRIME,
+    $STAT_INDEL_3_PRIME,
+    $STAT_MUTATION_3_PRIME,
+    $STAT_READ_MISMATCH,
+    $STAT_OTHER_MISMATCHES,
+    $STAT_OK_WILD_TYPE,
+    $STAT_OK_DELETION,
+    $STAT_OK_INSERTION,
+);
+
+my $COLOR_DELETION = "cyan3";
+my $COLOR_INSERTION = "darkorchid3";
+my $STAT_COLOR = {
+    "$STAT_NO_ALIGNMENT" => "lightgrey",
+    "$STAT_SHORT_READ" => "grey",
+    "$STAT_NO_OVERLAP" => "darkgrey",
+    "$STAT_INDEL_5_PRIME" => "goldenrod1",
+    "$STAT_MUTATION_5_PRIME" => "goldenrod2",
+    "$STAT_INDEL_3_PRIME" => "goldenrod3",
+    "$STAT_MUTATION_3_PRIME" => "goldenrod4",
+    "$STAT_READ_MISMATCH" => "coral2",
+    "$STAT_OTHER_MISMATCHES" => "coral3",
+    "$STAT_OK_WILD_TYPE" => "white",
+    "$STAT_OK_DELETION" => $COLOR_DELETION,
+    "$STAT_OK_INSERTION" => $COLOR_INSERTION,
+};
+
+
 GetOptions(
     "help"  => \$help,
     "debug"  => \$debug,
@@ -55,14 +102,13 @@ foreach my $key (sort keys %$stats) {
 }
 print "TOTAL: $total\n";
 
-my $wt = ($stats->{"OK:WILD-TYPE"} or 0);
-
 my $top_sequences = [];
 if ($ref_seq_file) {
-    $top_sequences = get_top_sequences($ref_seq_file, $data_file);
+    my $wt = ($stats->{$STAT_OK_WILD_TYPE} or 0);
+    $top_sequences = get_top_sequences($ref_seq_file, $data_file, $wt);
 }
 
-my $R_script = write_R_script($label, $data_file, $top_sequences, $wt, $output_pdf_file);
+my $R_script = write_R_script($label, $data_file, $top_sequences, $stats, $output_pdf_file);
 
 print qx"Rscript $R_script";
 
@@ -73,7 +119,8 @@ exit(0);
 
   Arg[1]        : string $ref_seq_filename
   Arg[2]        : string $data_filename
-  Example       : my $top_sequences = get_top_sequences($ref_seq_file, $$data_file);
+  Arg[3]        : integer $num_of_wild_type_seqs
+  Example       : my $top_sequences = get_top_sequences($ref_seq_file, $$data_file, 1213);
   Description   : Reads from the $data_file the most common deletions and insertions (up to 10) and
                   aligns them to the wild-type sequence.
   Returns       : arrayref of strings
@@ -82,7 +129,7 @@ exit(0);
 =cut
 
 sub get_top_sequences {
-    my ($ref_seq_file, $data_file) = @_;
+    my ($ref_seq_file, $data_file, $wt) = @_;
     my $top_sequences = [];
 
     ## ------------------------------------------------------------------------------
@@ -129,14 +176,14 @@ sub get_top_sequences {
     ## ------------------------------------------------------------------------------
     ## Sets the output format (using whitespaces to be nicely printed in R afterewards)
     ## ------------------------------------------------------------------------------
-    my $format = "\%-".($max_to-$min_from)."s \%7s \%4s \%3s \%6s \%-${longest_seq}s";
+    my $format = "\%-".($max_to-$min_from)."s \%7s  \%-4s \%3s \%6s \%-${longest_seq}s";
 
 
     ## ------------------------------------------------------------------------------
     ## Header and WT sequence
     ## ------------------------------------------------------------------------------
     my $header = sprintf($format, "Sequence" , "Num", "TYPE", "L", "POS", "Diff");
-    my $wt_sequence = sprintf($format, substr($ref_seq, $min_from, $max_to-$min_from), $wt, "W-T", 0, "NA", "");
+    my $wt_sequence = sprintf($format, substr($ref_seq, $min_from, $max_to-$min_from), $wt, "WT", 0, "NA", "");
     $top_sequences = [$header, "", $wt_sequence, ""];
 
 
@@ -233,7 +280,7 @@ sub parse_bam_file {
         ## Check that both reads align (i.e., they have a cigar string)
         ## ------------------------------------------------------------------------------
         if ($cigar1 eq "*" or $cigar2 eq "*") {
-            $stats->{"01.no_cigar"}++;
+            $stats->{$STAT_NO_ALIGNMENT}++;
             next;
         }
 
@@ -242,7 +289,7 @@ sub parse_bam_file {
         ## Check that both reads are long enough
         ## ------------------------------------------------------------------------------
         if (length($seq1) < $min_length or length($seq2) < $min_length) {
-            $stats->{"02.short_read"}++;
+            $stats->{$STAT_SHORT_READ}++;
             next;
         }
 
@@ -253,7 +300,7 @@ sub parse_bam_file {
         my $overlap_start = $pos1>$pos2?$pos1:$pos2;
         my $overlap_end = $end1<$end2?$end1:$end2;
         if ($overlap_end < $overlap_start + $min_overlap) {
-            $stats->{"03.no_overlap"}++;
+            $stats->{$STAT_NO_OVERLAP}++;
             next;
         }
 #        print "Overlap: $overlap_start-$overlap_end\n";
@@ -267,7 +314,7 @@ sub parse_bam_file {
 
 
         ## ------------------------------------------------------------------------------
-        ## Clip the sequence 3' of the overlap (and check that there is no mismatch nor indel)
+        ## Clip the sequence 5' of the overlap (and check that there is no mismatch nor indel)
         ## ------------------------------------------------------------------------------
         if ($pos1 > $pos2) {
             # Clip R2
@@ -275,15 +322,15 @@ sub parse_bam_file {
             my ($initial_match) = $cigar2 =~ /^(\d*)M/;
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
             if ($initial_match < $diff_in_ref_bp) {
-                # Indels in the 3' non-overlapping sequence: ignore the pair!
-                $stats->{"05.indel_in_3prime"}++;
+                # Indels in the 5' non-overlapping sequence: ignore the pair!
+                $stats->{$STAT_INDEL_5_PRIME}++;
                 next;
             }
             ($initial_match) = $md2 =~ /^MD:Z:(\d*)/;
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
             if ($initial_match < $diff_in_ref_bp) {
                 # Indels in the 3' non-overlapping sequence: ignore the pair!
-                $stats->{"06.mismatch_in_3prime"}++;
+                $stats->{$STAT_MUTATION_5_PRIME}++;
                 next;
             }
             substr($seq2, 0, $diff_in_ref_bp, "");
@@ -295,14 +342,14 @@ sub parse_bam_file {
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
             if ($initial_match < $diff_in_ref_bp) {
                 # Indels in the 3' non-overlapping sequence: ignore the pair!
-                $stats->{"05.indel_in_3prime"}++;
+                $stats->{$STAT_INDEL_5_PRIME}++;
                 next;
             }
             ($initial_match) = $md1 =~ /^MD:Z:(\d*)/;
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
             if ($initial_match < $diff_in_ref_bp) {
                 # Indels in the 3' non-overlapping sequence: ignore the pair!
-                $stats->{"06.mismatch_in_3prime"}++;
+                $stats->{$STAT_MUTATION_5_PRIME}++;
                 next;
             }
             substr($seq1, 0, $diff_in_ref_bp, "");
@@ -311,7 +358,7 @@ sub parse_bam_file {
 
 
         ## ------------------------------------------------------------------------------
-        ## Clip the sequence 5' of the overlap (and check that there is no mismatch nor indel)
+        ## Clip the sequence 3' of the overlap (and check that there is no mismatch nor indel)
         ## ------------------------------------------------------------------------------
         if ($end1 > $end2) {
             # Clip R1
@@ -320,14 +367,14 @@ sub parse_bam_file {
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
             if ($last_match < $diff_in_ref_bp) {
                 # Indels in the 3' non-overlapping sequence: ignore the pair!
-                $stats->{"07.indel_in_5prime"}++;
+                $stats->{$STAT_INDEL_3_PRIME}++;
                 next;
             }
             ($last_match) = $md1 =~ /(\d*)$/;
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
             if ($last_match < $diff_in_ref_bp) {
                 # Indels in the 3' non-overlapping sequence: ignore the pair!
-                $stats->{"08.mismatch_in_5prime"}++;
+                $stats->{$STAT_MUTATION_3_PRIME}++;
                 next;
             }
             substr($seq1, -$diff_in_ref_bp, $diff_in_ref_bp, "");
@@ -339,14 +386,14 @@ sub parse_bam_file {
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
             if ($last_match < $diff_in_ref_bp) {
                 # Indels in the 3' non-overlapping sequence: ignore the pair!
-                $stats->{"07.indel_in_5prime"}++;
+                $stats->{$STAT_INDEL_3_PRIME}++;
                 next;
             }
             ($last_match) = $md2 =~ /(\d*)$/;
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
             if ($last_match < $diff_in_ref_bp) {
                 # Indels in the 3' non-overlapping sequence: ignore the pair!
-                $stats->{"08.mismatch_in_5prime"}++;
+                $stats->{$STAT_MUTATION_3_PRIME}++;
                 next;
             }
             substr($seq2, -$diff_in_ref_bp, $diff_in_ref_bp, "");
@@ -358,7 +405,7 @@ sub parse_bam_file {
         ## Check that both sequences are identical on the overlap
         ## ------------------------------------------------------------------------------
         if ($seq1 ne $seq2) {
-            $stats->{"09.mismatch_between_reads"}++;
+            $stats->{$STAT_READ_MISMATCH}++;
             print "MM $seq1\nMM $seq2\n" if ($debug);
             next;
         }
@@ -369,7 +416,7 @@ sub parse_bam_file {
         ## the $data_file
         ## ------------------------------------------------------------------------------
         if ($md1 =~ /^MD:Z:\d+\^[A-Z]+\d+$/ and $md2 =~ /^MD:Z:\d+\^[A-Z]+\d+$/ and $cigar1 =~ /^\d+M\d*D\d+M$/ and $cigar2 =~ /^\d+M\d*D\d+M$/) {
-            $stats->{"OK:clean_deletion"}++;
+            $stats->{$STAT_OK_DELETION}++;
             my ($deletion_length) = $cigar1 =~ /(\d+)D/;
 #             my ($insertion_length2) = $cigar2 =~ /(\d+)D/;
 #             my ($insertion_length3) = length(($md1 =~ /^MD:Z:\d+\^([A-Z]+)\d+$/)[0]);
@@ -382,17 +429,17 @@ sub parse_bam_file {
             my $deletion_seq = substr($original_seq1, $position, $deletion_length);
             print DATA join("\t", $qname1, "DEL", $deletion_length, $position, $position + $deletion_length, $position + $deletion_length/2, $deletion_seq), "\n";
         } elsif ($md1 =~ /^MD:Z:\d+$/ and $md2 =~ /^MD:Z:\d+$/ and $cigar1 =~ /^\d+M\d*I\d+M$/ and $cigar2 =~ /^\d+M\d*I\d+M$/) { 
-            $stats->{"OK:clean_insertion"}++;
+            $stats->{$STAT_OK_INSERTION}++;
             my ($insertion_length) = $cigar1 =~ /(\d+)I/;
             my $position = ($cigar1 =~ /^(\d+)M/)[0] + $pos1;
             my $insertion_seq = substr($original_seq1, $position, $insertion_length);
             print DATA join("\t", $qname1, "INS", $insertion_length, $position + 1, $position, $position + 1/2, $insertion_seq), "\n";
         } elsif ($md1 =~ /^MD:Z:\d+$/ and $md2 =~ /^MD:Z:\d+$/ and $cigar1 =~ /^\d+M$/ and $cigar2 =~ /^\d+M$/) {
-            $stats->{"OK:WILD-TYPE"}++;
+            $stats->{$STAT_OK_WILD_TYPE}++;
             next;
         } else {
 #             print join("\t", $cigar1, $md1, $cigar2, $md2), "\n";
-            $stats->{"10.other_mismatches"}++;
+            $stats->{$STAT_OTHER_MISMATCHES}++;
             next;
         }
 
@@ -409,10 +456,11 @@ sub parse_bam_file {
   Arg[1]        : string $label
   Arg[2]        : string $data_filename
   Arg[3]        : arrayref $top_sequences
-  Arg[4]        : num $wt
+  Arg[4]        : hashref $stats
+  Arg[5]        : num $wt
   Arg[5]        : string $output_pdf_file
-  Example       : my $R_file = write_R_script("test", "file.bam.data.txt", $top_sequences, 3123,
-                  "test.pdf")
+  Example       : my $R_file = write_R_script("test", "file.bam.data.txt", $stats, $top_sequences,
+                    3123, "test.pdf")
   Description   : Creates an R script to plot all the insertions and deletions in PDF, PNG and SVG
                   format
   Returns       : string with the filename with the resulting R code
@@ -421,15 +469,48 @@ sub parse_bam_file {
 =cut
 
 sub write_R_script {
-    my ($label, $data_file, $top_sequences, $wt, $output_pdf_file) = @_;
+    my ($label, $data_file, $top_sequences, $stats, $output_pdf_file) = @_;
 
     my $num_lines = @$top_sequences;
     my $R_script = $data_file;
     $R_script =~ s/.data.txt$/.R/;
 
+    my $wt = ($stats->{$STAT_OK_WILD_TYPE} or 0);
+
     open(R, ">$R_script") or die;
     print R "
+# =============================================================================
+#  Input data
+# =============================================================================
+#  Data is a matrix of events for the PE reads that pass all the filters.
+#  Stats is a matrix with stats re the number of events found in the bam file.
+# =============================================================================
 data <- read.table('$data_file', header=T, row.names=1)
+stats = matrix(data=c(\"",
+    join("\",\"", @STAT_ORDER,
+        (map {$stats->{$_} or 0} @STAT_ORDER),
+        (map {$STAT_COLOR->{$_} or 0} @STAT_ORDER)),
+         "\"), ncol=3, byrow=F)
+stats = subset(stats, stats[,2]>0);
+stats.fail = subset(stats, stats[,1]!='$STAT_OK_WILD_TYPE' & stats[,1]!='$STAT_OK_DELETION' & stats[,1]!='$STAT_OK_INSERTION')
+stats.ok = subset(stats, stats[,1]=='$STAT_OK_WILD_TYPE' | stats[,1]=='$STAT_OK_DELETION' | stats[,1]=='$STAT_OK_INSERTION')
+
+
+# =============================================================================
+#  Colors
+# =============================================================================
+#  Get the colors from the Perl script. Also gets darker versions for
+#  insertions and deletions.
+# =============================================================================
+darken.color <- function(col, amount) {
+    mix.col.rgb = colorRamp(c(col, 'black'))(amount)[1,]/255
+    mix.col = rgb(mix.col.rgb[1],mix.col.rgb[2],mix.col.rgb[3])
+    return(mix.col)
+}
+col.del = '$COLOR_DELETION'
+col.ins = '$COLOR_INSERTION'
+dark.col.del = darken.color(col.del, 0.3);
+dark.col.ins = darken.color(col.ins, 0.3);
 
 # =============================================================================
 #  Subset data frame
@@ -479,8 +560,6 @@ plot.size.histograms <- function(data.del, data.ins) {
     h.ins = hist(data.ins[,1], breaks=breaks, plot=F);
 
     ### Cosmetic variables
-    col.del = rgb(0.8,0,0)
-    col.ins = rgb(1,0.5,0.5)
     ylim.max = max(h.del\$counts, h.ins\$counts)
     xlim = c(min(h.del\$breaks)+1,max(h.del\$breaks))
     xlab.del = paste0('Deletion sizes (n = ', num.del, '; ', perc.del, ')')
@@ -555,8 +634,6 @@ plot.location.images <- function(data.del, data.ins) {
     h.ins = hist(data.ins[,4], breaks=breaks, plot=F);
 
     ### Cosmetic variables
-    col.del = rgb(0,0,0.8)
-    col.ins = rgb(0.5,0.5,1)
     ylim.max = 1.04*max(h.del\$counts, h.ins\$counts)
     xlim = c(breaks[1],breaks[length(breaks)])
     xlab.del = paste0('Location of Deletions (n = ', num.del, '; ', perc.del, ')')
@@ -608,7 +685,8 @@ plot.location.images <- function(data.del, data.ins) {
     if (num.del > 0) {
         ylim = c(0,max(data.del[,1],10))
         smoothScatter(data.del[,4], data.del[,1], xlim=xlim, ylim=ylim,
-            main=main, xlab=xlab.del, ylab='Deletion size');
+            main=main, xlab=xlab.del, ylab='Deletion size',
+            colramp = colorRampPalette(c('white', dark.col.del)));
     } else {
         plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
         text(0, 0, labels=c('No deletions'))
@@ -619,7 +697,8 @@ plot.location.images <- function(data.del, data.ins) {
     if (num.ins > 0) {
         ylim = c(0,max(data.ins[,1],10))
         smoothScatter(data.ins[,4], data.ins[,1], xlim=xlim, ylim=ylim,
-            main=main, xlab=xlab.ins, ylab='Insertion size');
+            main=main, xlab=xlab.ins, ylab='Insertion size',
+            colramp = colorRampPalette(c('white', dark.col.ins)));
     } else {
         plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
         text(0, 0, labels=c('No insertions'))
@@ -649,7 +728,7 @@ plot.deletion.frequencies <- function(data) {
         xlab='Location of deleted bp', ylab='counts')
     # add light blue rectangles with white background
     rect(min(range\$from):max(range\$to)-0.5, 0, min(range\$from):max(range\$to)+0.5,
-        del[min(range\$from):max(range\$to)], col='lightblue', border='white')
+        del[min(range\$from):max(range\$to)], col=col.del, border='white')
     # add a black line around the profile of deletion frequencies
     lines(min(range\$from):max(range\$to)-0.5,
         del[min(range\$from):max(range\$to)], type='s', col='black')
@@ -662,7 +741,13 @@ plot.deletion.frequencies <- function(data) {
 #  This method plots a pie chart with the number of WT, DEL and INS sequences
 # =============================================================================
 plot.pie.chart <- function() {
-    pie(c(num.wt, num.del, num.ins), labels=c('WT','DEL','INS'), main=paste0('Summary of events (', '$label', ')'))
+    my.stats = stats
+    pie(as.numeric(my.stats[,2]), labels=my.stats[,1], main=paste0('Summary of events (', '$label', ')'), col=my.stats[,3])
+    mtext('5\\'/3\\' mut and indels: Differences with the WT seq before the overlap', side=1, line=0)
+    mtext('Reads differ: The reads differ on the overlap', side=1, line=1)
+    mtext('Other mismatches: Differences with the WT seq in the overlap or more than 1 indel', side=1, line=2)
+    my.stats = stats.ok
+    pie(as.numeric(my.stats[,2]), labels=my.stats[,1], main=paste0('Summary of events (', '$label', ')'), col=my.stats[,3])
     mtext(paste0('Wild-type (n = ', num.wt, '; ', perc.wt, ')'), side=1, line=0)
     mtext(paste0('Deletions (n = ', num.del, '; ', perc.del, ')'), side=1, line=1)
     mtext(paste0('Insertions (n = ', num.ins, '; ', perc.ins, ')'), side=1, line=2)
@@ -697,6 +782,11 @@ plot.topseqs <- function(data) {
 plot.figures <- function() {
 
     plot.pie.chart()
+";
+    if (@$top_sequences) {
+        print R "   plot.topseqs(data.del)\n";
+    }
+    print R "
 
     ### Check that there are data to be plotted
     if (num.del+num.ins > 0) {
@@ -709,11 +799,6 @@ plot.figures <- function() {
         plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main='$label')
         text(0, 0, labels=c('No events to plot'))
     }
-";
-    if (@$top_sequences) {
-        print R "   plot.topseqs(data.del)\n";
-    }
-    print R "
 }
 
 # =============================================================================
