@@ -2,6 +2,12 @@
 use strict;
 use warnings;
 
+use Pod::Usage;
+use Getopt::Long;
+use File::Basename;
+use IPC::Cmd qw[run];
+
+
 =pod
 
 =head1 NAME
@@ -111,10 +117,6 @@ intended for developers only.
 =cut
 
 
-use Pod::Usage;
-use Getopt::Long;
-use IPC::Cmd qw[run];
-
 my $VERSION = "0.1a";
 
 my $help;
@@ -123,9 +125,11 @@ my $input_dir;
 my $wt_seq_file;
 my $merge_file;
 my $output_dir;
-my $trim_galore = "/Users/javier/Downloads/trim_galore_v0-2/trim_galore";
+my $trim_galore = "trim_galore";
+my $samtools = "samtools";
 my $bowtie2_build_exe = "bowtie2-build";
 my $bowtie2_exe = "bowtie2";
+my $parser = dirname(__FILE__)."/parse_crispr_pe_bam_file.pl";
 
 GetOptions(
     "help" => \$help,
@@ -156,7 +160,7 @@ my $validated_files = run_trim_galore($trim_galore, $merged_files, $output_dir);
 
 my $bam_files = run_bowtie2($bowtie2_exe, $bowtie2_index_file, $validated_files, $output_dir);
 
-run_parser("parse_crispr_pe_bam_file.pl", $bam_files, $this_wt_seq_file, $output_dir);
+run_parser($parser, $bam_files, $this_wt_seq_file, $output_dir);
 
 
 =head2 create_readme_file
@@ -472,7 +476,7 @@ sub run_bowtie2 {
         }
         my ($file1, $file2) = @$this_pair_of_validated_files;
         my $command = [$bowtie2_exe, "-x", $bowtie2_index_file, "-1", $file1, "-2", $file2,
-                        "|", "samtools", "view", "-Sb", "-",
+                        "|", $samtools, "view", "-Sb", "-",
                         ">", $this_bam_file];
         my ($ok, $err, $full_buff, $stdout_buff, $stderr_buff) = run(command => $command);
         if (!$ok) {
@@ -517,7 +521,7 @@ sub run_parser {
     while (my ($label, $this_bam_file) = each %$bam_files) {
         my $this_pdf_file = "$output_dir/$label.out.pdf";
         my $this_txt_file = "$output_dir/$label.out.txt";
-        my $command = ["perl", $parser, "--input", $this_bam_file, "--out", $this_pdf_file, "--ref_seq", $this_wt_seq_file,
+        my $command = [$parser, "--input", $this_bam_file, "--out", $this_pdf_file, "--ref_seq", $this_wt_seq_file,
                         "--label", $label, ">", $this_txt_file];
         my ($ok, $err, $full_buff, $stdout_buff, $stderr_buff) = run(command => $command);
         if (!$ok) {
