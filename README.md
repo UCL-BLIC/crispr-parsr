@@ -87,9 +87,13 @@ Example (without labels):
 ## Requirements
 
 **TrimGalore!**: http://www.bioinformatics.babraham.ac.uk/projects/trim_galore/
+
 **FastQC**: http://www.bioinformatics.babraham.ac.uk/projects/fastqc/
+
 **cutadapt**: https://code.google.com/p/cutadapt/
+
 **samtools**: http://www.htslib.org
+
 **Bowtie2**: http://bowtie-bio.sourceforge.net/bowtie2/index.shtml
 
 Make sure that these softwares are available on the current path when running this tool.
