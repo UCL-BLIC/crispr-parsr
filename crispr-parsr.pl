@@ -151,7 +151,7 @@ my $trim_galore = "trim_galore";
 my $samtools = "samtools";
 my $bowtie2_build_exe = "bowtie2-build";
 my $bowtie2_exe = "bowtie2";
-my $parser = dirname(__FILE__)."/parse_crispr_pe_bam_file.pl";
+my $plotr = dirname(__FILE__)."/crispr-plotr.pl";
 
 GetOptions(
     "help" => \$help,
@@ -182,7 +182,7 @@ my $validated_files = run_trim_galore($trim_galore, $merged_files, $output_dir);
 
 my $bam_files = run_bowtie2($bowtie2_exe, $bowtie2_index_file, $validated_files, $output_dir);
 
-run_parser($parser, $bam_files, $this_wt_seq_file, $output_dir);
+run_plotr($plotr, $bam_files, $this_wt_seq_file, $output_dir);
 
 
 =head2 create_readme_file
@@ -246,7 +246,7 @@ Here is a brief description of the files you will find in here:
  - bowtie2-build.out.txt            Info from the bowtie2-build process (indexing the wild-type seq)
  - trim_galore."sample".out.txt     Info from Trim Galore! for this sampe (trimming and QC)
  - bowtie2."sample".out.txt         Info from the bowtie2 process for this sample (mapping the reads)
- - parser."sample".out.txt          Info from the parser process for this sample (extracting insertion and deletions)
+ - plotr."sample".out.txt           Info from the parsing and plotting process for this sample (extracting insertion and deletions)
 
 
 * Results
@@ -524,34 +524,34 @@ sub run_bowtie2 {
 }
 
 
-=head2 run_parser
+=head2 run_plotr
 
-  Arg[1]        : string $parser (the name of the Perl script with full path)
+  Arg[1]        : string $plotr (the name of the Perl script with full path)
   Arg[2]        : hashref $bam_files ($label => $bam_file)
   Arg[3]        : string $wt_fasta_file
   Arg[4]        : string $output_dirname
-  Example       : run_parser($parser, $bam_files, $wt_fasta_file, $output_dir);
+  Example       : run_plotr($plotr, $bam_files, $wt_fasta_file, $output_dir);
   Description   : 
   Returns       : 
   Exceptions    : 
 
 =cut
 
-sub run_parser {
-    my ($parser, $bam_files, $this_wt_seq_file, $output_dir) = @_;
+sub run_plotr {
+    my ($plotr, $bam_files, $this_wt_seq_file, $output_dir) = @_;
 
     while (my ($label, $this_bam_file) = each %$bam_files) {
         my $this_pdf_file = "$output_dir/$label.out.pdf";
         my $this_txt_file = "$output_dir/$label.out.txt";
-        my $command = [$parser, "--input", $this_bam_file, "--out", $this_pdf_file, "--ref_seq", $this_wt_seq_file,
+        my $command = [$plotr, "--input", $this_bam_file, "--out", $this_pdf_file, "--ref_seq", $this_wt_seq_file,
                         "--label", $label, ">", $this_txt_file];
         my ($ok, $err, $full_buff, $stdout_buff, $stderr_buff) = run(command => $command);
         if (!$ok) {
-            die "ERROR while running parser: $err\n";
+            die "ERROR while running plotr: $err\n";
         }
         # Saves the command line and the stderr buffer.
         # The stdout buffer is the TXT output captured in the command.
-        open(OUT, ">$output_dir/parser.$label.out.txt") or die;
+        open(OUT, ">$output_dir/plotr.$label.out.txt") or die;
         print OUT "CMD: ", join(" ", @$command), "\n\n";
         print OUT "OUTPUT:\n";
         print OUT join("\n", @$stderr_buff);
