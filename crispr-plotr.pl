@@ -11,6 +11,14 @@ my $debug;
 my $ref_seq_file;
 my $min_overlap = 10;
 my $min_length = 80;
+my $allow_indels = 0;
+my $allow_muts = 0;
+my $allow_any = 0;
+my $plot_pdf = 1;
+my $plot_png = 0;
+my $plot_svg = 0;
+my $plot_all = 0;
+my $force_plots = 0;
 my $desc = qq{parse_crispr_pe_bam_file.pl [options] --input in.bam --output out.pdf
 
 Description:
@@ -78,9 +86,21 @@ GetOptions(
     "help"  => \$help,
     "debug"  => \$debug,
     "label=s" => \$label,
-    "input_file=s" => \$input_bam_file,
-    "output_file=s" => \$output_pdf_file,
-    "ref_seq=s" => \$ref_seq_file,
+    "input_file|input-file=s" => \$input_bam_file,
+    "output_file|output-file=s" => \$output_pdf_file,
+    "ref_seq|ref-seq=s" => \$ref_seq_file,
+    "min_overlap|min-overlap=i" => \$min_overlap,
+    "min_length|min-length=i" => \$min_length,
+
+    "allow_indels|allow-indels|indels!" => \$allow_indels,
+    "allow_muts|allow-muts|muts!" => \$allow_muts,
+    "allow_any|allow-any|any!" => \$allow_any,
+
+    "plot_pdf|plot-pdf|pdf!" => \$plot_pdf,
+    "plot_png|plot-png|png!" => \$plot_png,
+    "plot_svg|plot-svg|svg!" => \$plot_svg,
+    "plot_all|plot-all!" => \$plot_all,
+    "force_plots|force-plots!" => \$force_plots,
     );
 
 if ($help or !$input_bam_file or !$output_pdf_file) {
@@ -90,6 +110,17 @@ if ($help or !$input_bam_file or !$output_pdf_file) {
 
 if (!$label) {
     $label = $input_bam_file;
+}
+
+if ($allow_any) {
+    $allow_indels = 1;
+    $allow_muts = 1;
+}
+
+if ($plot_all) {
+    $plot_pdf = 1;
+    $plot_png = 1;
+    $plot_svg = 1;
 }
 
 my ($data_file, $stats) = parse_bam_file($input_bam_file);
@@ -168,6 +199,11 @@ sub get_top_sequences {
         $min_from = $from-1 if (!$min_from or $from-1 < $min_from);
         $max_to = $from if (!$max_to or $from > $max_to);
         $longest_seq = length($seq)+2 if ($longest_seq < length($seq)+2);
+    }
+    if (!defined($max_to)) {
+        # i.e. no deletions nor insertions
+        $max_to = int(length($ref_seq)/2)+10;
+        $min_from = $max_to-10;
     }
     $min_from -= 21;
     $min_from = 0 if ($min_from < 0);
@@ -321,15 +357,15 @@ sub parse_bam_file {
             my $diff_in_ref_bp = $pos1 - $pos2;
             my ($initial_match) = $cigar2 =~ /^(\d*)M/;
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
-            if ($initial_match < $diff_in_ref_bp) {
+            if (!$allow_indels and $initial_match < $diff_in_ref_bp) {
                 # Indels in the 5' non-overlapping sequence: ignore the pair!
                 $stats->{$STAT_INDEL_5_PRIME}++;
                 next;
             }
             ($initial_match) = $md2 =~ /^MD:Z:(\d*)/;
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
-            if ($initial_match < $diff_in_ref_bp) {
-                # Indels in the 3' non-overlapping sequence: ignore the pair!
+            if (!$allow_muts and $initial_match < $diff_in_ref_bp) {
+                # Indels in the 5' non-overlapping sequence: ignore the pair!
                 $stats->{$STAT_MUTATION_5_PRIME}++;
                 next;
             }
@@ -340,15 +376,15 @@ sub parse_bam_file {
             my $diff_in_ref_bp = $pos2 - $pos1;
             my ($initial_match) = $cigar1 =~ /^(\d*)M/;
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
-            if ($initial_match < $diff_in_ref_bp) {
-                # Indels in the 3' non-overlapping sequence: ignore the pair!
+            if (!$allow_indels and $initial_match < $diff_in_ref_bp) {
+                # Indels in the 5' non-overlapping sequence: ignore the pair!
                 $stats->{$STAT_INDEL_5_PRIME}++;
                 next;
             }
             ($initial_match) = $md1 =~ /^MD:Z:(\d*)/;
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
-            if ($initial_match < $diff_in_ref_bp) {
-                # Indels in the 3' non-overlapping sequence: ignore the pair!
+            if (!$allow_muts and $initial_match < $diff_in_ref_bp) {
+                # Indels in the 5' non-overlapping sequence: ignore the pair!
                 $stats->{$STAT_MUTATION_5_PRIME}++;
                 next;
             }
@@ -365,14 +401,14 @@ sub parse_bam_file {
             my $diff_in_ref_bp = $end1 - $end2;
             my ($last_match) = $cigar1 =~ /(\d*)M$/;
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
-            if ($last_match < $diff_in_ref_bp) {
+            if (!$allow_indels and ($last_match < $diff_in_ref_bp)) {
                 # Indels in the 3' non-overlapping sequence: ignore the pair!
                 $stats->{$STAT_INDEL_3_PRIME}++;
                 next;
             }
             ($last_match) = $md1 =~ /(\d*)$/;
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
-            if ($last_match < $diff_in_ref_bp) {
+            if (!$allow_muts and ($last_match < $diff_in_ref_bp)) {
                 # Indels in the 3' non-overlapping sequence: ignore the pair!
                 $stats->{$STAT_MUTATION_3_PRIME}++;
                 next;
@@ -384,14 +420,14 @@ sub parse_bam_file {
             my $diff_in_ref_bp = $end2 - $end1;
             my ($last_match) = $cigar2 =~ /(\d*)M$/;
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
-            if ($last_match < $diff_in_ref_bp) {
+            if (!$allow_indels and ($last_match < $diff_in_ref_bp)) {
                 # Indels in the 3' non-overlapping sequence: ignore the pair!
                 $stats->{$STAT_INDEL_3_PRIME}++;
                 next;
             }
             ($last_match) = $md2 =~ /(\d*)$/;
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
-            if ($last_match < $diff_in_ref_bp) {
+            if (!$allow_muts and ($last_match < $diff_in_ref_bp)) {
                 # Indels in the 3' non-overlapping sequence: ignore the pair!
                 $stats->{$STAT_MUTATION_3_PRIME}++;
                 next;
@@ -495,6 +531,12 @@ stats = subset(stats, stats[,2]>0);
 stats.fail = subset(stats, stats[,1]!='$STAT_OK_WILD_TYPE' & stats[,1]!='$STAT_OK_DELETION' & stats[,1]!='$STAT_OK_INSERTION')
 stats.ok = subset(stats, stats[,1]=='$STAT_OK_WILD_TYPE' | stats[,1]=='$STAT_OK_DELETION' | stats[,1]=='$STAT_OK_INSERTION')
 
+force.plots = $force_plots
+plot.pdf = $plot_pdf
+plot.png = $plot_png
+plot.svg = $plot_svg
+
+label = '$label'
 
 # =============================================================================
 #  Colors
@@ -556,8 +598,8 @@ plot.size.histograms <- function(data.del, data.ins) {
 
     ### Get the histograms for deletions and insertions, using the set breaks. Store the
     ### result instead of plotting it.
-    h.del = hist(data.del[,1], breaks=breaks, plot=F);
-    h.ins = hist(data.ins[,1], breaks=breaks, plot=F);
+    h.del = hist(as.numeric(data.del[,1]), breaks=breaks, plot=F);
+    h.ins = hist(as.numeric(data.ins[,1]), breaks=breaks, plot=F);
 
     ### Cosmetic variables
     ylim.max = max(h.del\$counts, h.ins\$counts)
@@ -567,21 +609,21 @@ plot.size.histograms <- function(data.del, data.ins) {
     ylab='counts'
 
     ### Plot histogram for deletions only (if any)
-    main=paste0('Histogram of Deletion sizes (', '$label', ')')
+    main=paste0('Histogram of Deletion sizes (', label, ')')
     if (num.del > 0) {
         plot(h.del\$counts, xlim=xlim, type='n', xlab=xlab.del, ylab=ylab, main=main)
         rect(h.del\$mids, 0, h.del\$mids+1, h.del\$counts, col=col.del)
-    } else {
+    } else if (force.plots) {
         plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
         text(0, 0, labels=c('No deletions'))
     }
 
     ### Plot histogram for insertions only (if any)
-    main=paste0('Histogram of Insertion sizes (', '$label', ')')
+    main=paste0('Histogram of Insertion sizes (', label, ')')
     if (num.ins > 0) {
         plot(h.del\$counts, xlim=xlim, type='n', xlab=xlab.del, ylab=ylab, main=main)
         rect(h.ins\$mids, 0, h.ins\$mids+1, h.ins\$counts, col=col.ins)
-    } else {
+    } else if (force.plots) {
         plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
         text(0, 0, labels=c('No insertions'))
     }
@@ -598,7 +640,7 @@ plot.size.histograms <- function(data.del, data.ins) {
     # Add the top axis
     axis(3)
     # Write the main title (as an mtext so we can have it a little higher than by default)
-    mtext(paste0('Histogram of event sizes (', '$label', ')'), side=3, line = 5, cex=1.2, font=2)
+    mtext(paste0('Histogram of event sizes (', label, ')'), side=3, line = 5, cex=1.2, font=2)
     # Write the labels for the top and bottom x-axes
     mtext(xlab.del, side=3, line = 2.5)
     mtext(xlab.ins, side=1, line = 2.5)
@@ -620,7 +662,11 @@ plot.size.histograms <- function(data.del, data.ins) {
 # =============================================================================
 plot.location.images <- function(data.del, data.ins) {
     ### Use same breaks (x-axis) for all 3 plots. Make sure the range spans at least 10 bp.
-    breaks = (min(data.del[,4],data.ins[,4])-1):max(data.del[,4], data.ins[,4])+1
+    if (length(data.del[,4]) + length(data.ins[,4]) > 0 ) {
+        breaks = (min(data.del[,4],data.ins[,4], na.rm=T)-1):max(data.del[,4], data.ins[,4], na.rm=T)+1
+    } else {
+        breaks = 1:10
+    }
     while (length(breaks) < 10) {
         if (breaks[1] > 0) {
             breaks = c(breaks[1]-1, breaks)
@@ -630,8 +676,8 @@ plot.location.images <- function(data.del, data.ins) {
 
     ### Get the histograms for deletions and insertions, using the set breaks. Store the
     ### result instead of plotting it.
-    h.del = hist(data.del[,4], breaks=breaks, plot=F);
-    h.ins = hist(data.ins[,4], breaks=breaks, plot=F);
+    h.del = hist(as.numeric(data.del[,4]), breaks=breaks, plot=F);
+    h.ins = hist(as.numeric(data.ins[,4]), breaks=breaks, plot=F);
 
     ### Cosmetic variables
     ylim.max = 1.04*max(h.del\$counts, h.ins\$counts)
@@ -641,21 +687,21 @@ plot.location.images <- function(data.del, data.ins) {
     ylab='counts'
 
     ### Plot histogram for deletions only (if any)
-    main=paste0('Midpoint location of the deletions (', '$label', ')')
+    main=paste0('Midpoint location of the deletions (', label, ')')
     if (num.del > 0) {
         plot(h.del\$counts, xlim=xlim, type='n', xlab=xlab.del, ylab=ylab, main=main)
         rect(h.del\$mids, 0, h.del\$mids+1, h.del\$counts, col=col.del)
-    } else {
+    } else if (force.plots) {
         plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
         text(0, 0, labels=c('No deletions'))
     }
 
     ### Plot histogram for insertions only (if any)
-    main=paste0('Midpoint location of the insertions (', '$label', ')')
+    main=paste0('Midpoint location of the insertions (', label, ')')
     if (num.ins) {
         plot(h.ins\$counts, xlim=xlim, type='n', xlab=xlab.del, ylab=ylab, main=main)
         rect(h.ins\$mids, 0, h.ins\$mids+1, h.ins\$counts, col=col.ins)
-    } else {
+    } else if (force.plots) {
         plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
         text(0, 0, labels=c('No insertions'))
     }
@@ -672,7 +718,7 @@ plot.location.images <- function(data.del, data.ins) {
     # Add the top axis
     axis(3)
     # Write the main title (as an mtext so we can have it a little higher than by default)
-    mtext(paste0('Midpoint location (', '$label', ')'), side=3, line = 5, cex=1.2, font=2)
+    mtext(paste0('Midpoint location (', label, ')'), side=3, line = 5, cex=1.2, font=2)
     # Write the labels for the top and bottom x-axes
     mtext(xlab.del, side=3, line = 2.5)
     mtext(xlab.ins, side=1, line = 2.5)
@@ -681,25 +727,25 @@ plot.location.images <- function(data.del, data.ins) {
 
 
     ### Plot the scatter plot for deletions (if any). Uses the same x-axis as the other plots
-    main = paste0('Scatter plot of Deletions sizes vs Midpoint location (', '$label', ')')
+    main = paste0('Scatter plot of Deletions sizes vs Midpoint location (', label, ')')
     if (num.del > 0) {
         ylim = c(0,max(data.del[,1],10))
         smoothScatter(data.del[,4], data.del[,1], xlim=xlim, ylim=ylim,
             main=main, xlab=xlab.del, ylab='Deletion size',
             colramp = colorRampPalette(c('white', dark.col.del)));
-    } else {
+    } else if (force.plots) {
         plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
         text(0, 0, labels=c('No deletions'))
     }
     
     ### Plot the scatter plot for insertions (if any). Uses the same x-axis as the other plots
-    main = paste0('Scatter plot of Insertion sizes vs Midpoint location (', '$label', ')')
+    main = paste0('Scatter plot of Insertion sizes vs Midpoint location (', label, ')')
     if (num.ins > 0) {
         ylim = c(0,max(data.ins[,1],10))
         smoothScatter(data.ins[,4], data.ins[,1], xlim=xlim, ylim=ylim,
             main=main, xlab=xlab.ins, ylab='Insertion size',
             colramp = colorRampPalette(c('white', dark.col.ins)));
-    } else {
+    } else if (force.plots) {
         plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
         text(0, 0, labels=c('No insertions'))
     }
@@ -716,6 +762,13 @@ plot.location.images <- function(data.del, data.ins) {
 plot.deletion.frequencies <- function(data) {
     ### Create a new data.frame with the from and to values
     range = data.frame(from=data[,2], to=data[,3])
+    main=paste0('Frequency of deletion per bp (', label, ')')
+
+    if (nrow(range) == 0) {
+        plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
+        text(0, 0, labels=c('No deletions'))
+        return()
+    }
 
     ### Create a vector to store the number of times each bp has been deleted
     del <- vector(mode='numeric', length=max(data[,3]))
@@ -724,7 +777,7 @@ plot.deletion.frequencies <- function(data) {
     ### Genereate the plot
     # empty plot
     plot(del, xlim=c(min(range\$from-1),max(range\$to)+1), type='n',
-        main=paste0('Frequency of deletion per bp (', '$label', ')'),
+        main=main,
         xlab='Location of deleted bp', ylab='counts')
     # add light blue rectangles with white background
     rect(min(range\$from):max(range\$to)-0.5, 0, min(range\$from):max(range\$to)+0.5,
@@ -741,16 +794,31 @@ plot.deletion.frequencies <- function(data) {
 #  This method plots a pie chart with the number of WT, DEL and INS sequences
 # =============================================================================
 plot.pie.chart <- function() {
+    main = paste0('Summary of events (', label, ')')
     my.stats = stats
-    pie(as.numeric(my.stats[,2]), labels=my.stats[,1], main=paste0('Summary of events (', '$label', ')'), col=my.stats[,3])
-    mtext('5\\'/3\\' mut and indels: Differences with the WT seq before the overlap', side=1, line=0)
-    mtext('Reads differ: The reads differ on the overlap', side=1, line=1)
-    mtext('Other mismatches: Differences with the WT seq in the overlap or more than 1 indel', side=1, line=2)
+    if (sum(as.numeric(my.stats[,2])) > 0) {
+        pie(as.numeric(my.stats[,2]), labels=my.stats[,1], main=main, col=my.stats[,3])
+    } else if (force.plots) {
+        plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
+        text(0, 0, labels=c('No events'))
+    }
+    if ((sum(as.numeric(my.stats[,2])) > 0) | force.plots) {
+        mtext('5\\'/3\\' mut and indels: Differences with the WT seq before the overlap', side=1, line=0)
+        mtext('Reads differ: The reads differ on the overlap', side=1, line=1)
+        mtext('Other mismatches: Differences with the WT seq in the overlap or more than 1 indel', side=1, line=2)
+    }
     my.stats = stats.ok
-    pie(as.numeric(my.stats[,2]), labels=my.stats[,1], main=paste0('Summary of events (', '$label', ')'), col=my.stats[,3])
-    mtext(paste0('Wild-type (n = ', num.wt, '; ', perc.wt, ')'), side=1, line=0)
-    mtext(paste0('Deletions (n = ', num.del, '; ', perc.del, ')'), side=1, line=1)
-    mtext(paste0('Insertions (n = ', num.ins, '; ', perc.ins, ')'), side=1, line=2)
+    if (sum(as.numeric(my.stats[,2])) > 0) {
+        pie(as.numeric(my.stats[,2]), labels=my.stats[,1], main=main, col=my.stats[,3])
+    } else if (force.plots) {
+        plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
+        text(0, 0, labels=c('No events'))
+    }
+    if ((sum(as.numeric(my.stats[,2])) > 0) | force.plots) {
+        mtext(paste0('Wild-type (n = ', num.wt, '; ', perc.wt, ')'), side=1, line=0)
+        mtext(paste0('Deletions (n = ', num.del, '; ', perc.del, ')'), side=1, line=1)
+        mtext(paste0('Insertions (n = ', num.ins, '; ', perc.ins, ')'), side=1, line=2)
+    }
 }
 
 
@@ -766,7 +834,7 @@ plot.topseqs <- function(data) {
     par('mar' = c(mar[1],1,mar[3],1))
     ### Initiate plot
     plot(NA,xlim=c(0,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA,
-        main=paste0('Most common events (', '$label', ')'))
+        main=paste0('Most common events (', label, ')'))
     ### Add text
     text(0, 1-1:$num_lines/25, cex=0.4, adj=0, family='mono', labels=c('", join("', '", @$top_sequences), "'))
 }
@@ -789,15 +857,12 @@ plot.figures <- function() {
     print R "
 
     ### Check that there are data to be plotted
-    if (num.del+num.ins > 0) {
+     if (force.plots | num.del+num.ins > 0) {
     
         plot.size.histograms(data.del, data.ins)
         plot.location.images(data.del, data.ins)
         plot.deletion.frequencies(data.del)
 
-    } else {
-        plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main='$label')
-        text(0, 0, labels=c('No events to plot'))
     }
 }
 
@@ -807,20 +872,25 @@ plot.figures <- function() {
 #  Here the plots are created and saved to a PDF file , then to a set of PNG
 #  files and finally to a set of SVG files.
 # =============================================================================
-pdf('$output_pdf_file')
-plot.figures();
-dev.off()
+if (plot.pdf) {
+    pdf('$output_pdf_file')
+    plot.figures()
+    dev.off()
+}
 
-# Substitute the .pdf extension by %02d.png (to create several files like 01, 02, etc)
-png(sub('.pdf', '.%02d.png', '$output_pdf_file'))
-plot.figures();
-dev.off()
+if (plot.png) {
+    # Substitute the .pdf extension by %02d.png (to create several files like 01, 02, etc)
+    png(sub('.pdf', '.%02d.png', '$output_pdf_file'))
+    plot.figures();
+    dev.off()
+}
 
-# Substitute the .pdf extension by %02d.svg (to create several files like 01, 02, etc)
-svg(sub('.pdf', '.%02d.svg', '$output_pdf_file'))
-plot.figures();
-dev.off()
-
+if (plot.svg) {
+    # Substitute the .pdf extension by %02d.svg (to create several files like 01, 02, etc)
+    svg(sub('.pdf', '.%02d.svg', '$output_pdf_file'))
+    plot.figures();
+    dev.off()
+}
 ";
 
     close(R);
