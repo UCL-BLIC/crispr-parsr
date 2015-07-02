@@ -158,7 +158,7 @@ GetOptions(
     "verbose" => \$verbose,
     "input=s" => \$input_dir,
     "wt_file=s" => \$wt_seq_file,
-    "merge_file=s" => \$merge_file,
+    "samples|merge_file=s" => \$merge_file,
     "output=s" => \$output_dir,    
 );
 
