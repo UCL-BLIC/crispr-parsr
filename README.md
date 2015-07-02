@@ -83,3 +83,15 @@ Example (without labels):
 12345D01_S22_L001_R1_001.fastq  12345F02_S41_L001_R1_001.fastq
 12345D01_S22_L001_R2_001.fastq  12345F02_S41_L001_R1_001.fastq
 ```
+
+## Requirements
+
+**TrimGalore!**: http://www.bioinformatics.babraham.ac.uk/projects/trim_galore/
+**FastQC**: http://www.bioinformatics.babraham.ac.uk/projects/fastqc/
+**cutadapt**: https://code.google.com/p/cutadapt/
+**samtools**: http://www.htslib.org
+**Bowtie2**: http://bowtie-bio.sourceforge.net/bowtie2/index.shtml
+
+Make sure that these softwares are available on the current path when running this tool.
+Alternatively, you can hard-code the path at the top of the crispr-parsr.pl script. However
+this does not work for fastqc and cutadapt which are called from within TrimGalore!.

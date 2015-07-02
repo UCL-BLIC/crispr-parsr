@@ -64,8 +64,10 @@ in the INPUT_DIR.
     Example:
     ---------------------------------------
     >sample_amplicon1_ref_123456
-    AACAGTGGGTCTTCGGGAACCAAGCAGCAGCCATGGGAGGTCTGGCTGTGTTCAGGCTCTGCTCGTGTAGATTCACAGCGCGCTCTGAACCCCCGCTG
-    AGCTACCGATGGAAGAGGAGGAGGTCCTACAGTCGGAGATTCACAGCGCGCTCTGAACCACTTTCAGGAGACTCGACTATTATGACTTATACGCGATA
+    AACAGTGGGTCTTCGGGAACCAAGCAGCAGCCATGGGAGGTCTGGCTGTGTTCAGGCT
+    CTGCTCGTGTAGATTCACAGCGCGCTCTGAACCCCCGCTGAGCTACCGATGGAAGAGG
+    AGGAGGTCCTACAGTCGGAGATTCACAGCGCGCTCTGAACCACTTTCAGGAGACTCGA
+    CTATTATGACTTATACGCGATA
     ---------------------------------------
 
 =item B<--samples merge.txt>
@@ -108,6 +110,26 @@ in the INPUT_DIR.
     ---------------------------------------
 
 =back
+
+=head1 Requirements
+
+=over 8
+
+=item B<TrimGalore!>: http://www.bioinformatics.babraham.ac.uk/projects/trim_galore/
+
+=item B<FastQC>: http://www.bioinformatics.babraham.ac.uk/projects/fastqc/
+
+=item B<cutadapt>: https://code.google.com/p/cutadapt/
+
+=item B<samtools>: http://www.htslib.org
+
+=item B<Bowtie2>: http://bowtie-bio.sourceforge.net/bowtie2/index.shtml
+
+=back
+
+Make sure that these softwares are available on the current path when running this tool.
+Alternatively, you can hard-code the path at the top of the crispr-parsr.pl script. However
+this does not work for fastqc and cutadapt which are called from within TrimGalore!.
 
 =head1 INTERNAL METHODS
 
