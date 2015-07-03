@@ -36,6 +36,15 @@ From the input set of PE reads, it will filter out any pair where:
 
 =back
 
+The output is a series of plots with overall stats on the number of PE reads that pass or not the
+filters; the proportion of WT, insertions and deletions; the list of most common events; the
+distributions of insertion and deletion sizes as well as the distribution of the locations of these
+events; a scatter plot showing the relationship between both and one last plot with the frequency
+of deletions per bp.
+
+These plots are generated with R. The R script required to generate the plots is also stored in
+the output folder and can be edited by the user to modify the plots if needed.
+
 =head1 OPTIONS
 
 Please note that options names may be abbreviated to uniqueness, case does not matter, and a
@@ -255,8 +264,8 @@ if ($plot_all) {
 my ($data_file, $stats) = parse_bam_file($input_bam_file);
 
 my $total = 0;
-foreach my $key (sort keys %$stats) {
-    my $value = $stats->{$key};
+foreach my $key (@STAT_ORDER) {
+    my $value = ($stats->{$key} or 0);
     print "$key: $value\n";
     $total += $value;
 }
