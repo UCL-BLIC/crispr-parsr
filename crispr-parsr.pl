@@ -124,15 +124,27 @@ in the INPUT_DIR.
 
 =item B<TrimGalore!>: http://www.bioinformatics.babraham.ac.uk/projects/trim_galore/
 
+Successfully tested with v0.3.3 and v0.4.0
+
 =item B<FastQC>: http://www.bioinformatics.babraham.ac.uk/projects/fastqc/
+
+Successfully tested with v0.11.2 and v.0.11.3
 
 =item B<cutadapt>: https://code.google.com/p/cutadapt/
 
+Successfully tested with v1.8.1
+
 =item B<samtools>: http://www.htslib.org
+
+Successfully tested with v1.2
 
 =item B<Bowtie2>: http://bowtie-bio.sourceforge.net/bowtie2/index.shtml
 
+Successfully tested with v2.2.3
+
 =item B<R>: http://www.r-project.org
+
+Successfully tested with v3.1.1
 
 =back
 
@@ -180,7 +192,9 @@ if (!$input_dir or !$output_dir) {
 }
 
 
-mkdir($output_dir) or die "Cannot create output directory ($output_dir): $!\n";
+if (!-d $output_dir) {
+    mkdir($output_dir) or die "Cannot create output directory ($output_dir): $!\n";
+}
 
 create_readme_file($output_dir);
 
@@ -479,13 +493,60 @@ sub run_trim_galore {
         if (!-e $validated_file2) {
             die "ERROR: Cannot find validated file $validated_file2\n";
         }
-        $validated_files->{$label} = [$validated_file1, $validated_file2];
+
+        my ($fastqc_zip_file1, $fastqc_zip_file2) = @$this_pair_of_merged_files;
+        $fastqc_zip_file1 =~ s/.(fq|fastq|fa.gz|fastq.gz)$/_val_1_fastqc.zip/;
+        $fastqc_zip_file2 =~ s/.(fq|fastq|fa.gz|fastq.gz)$/_val_2_fastqc.zip/;
+        
+        if (check_fastqc_zip_file($fastqc_zip_file1) and check_fastqc_zip_file($fastqc_zip_file2)) {
+            $validated_files->{$label} = [$validated_file1, $validated_file2];
+        }
     }
     
-    #TODO: Check the FastQC output
     return $validated_files;
 }
 
+
+=head2 check_fastqc_zip_file
+
+  Arg[1]        : string $fastqc_zip_file (the name of the file, incl. the full path if needed)
+  Example       : my $ok = check_fastqc_zip_file($fastqc_zip_file);
+  Description   : Checks the results of FastQC stored in the summary.txt file. Some warnings and
+                  failures are expected for this analysis, but other should be considered as errors.
+  Returns       : boolean
+  Exceptions    : Dies if cannot extract summary.txt from the file
+
+=cut
+
+sub check_fastqc_zip_file {
+    my ($fastqc_zip_file) = @_;
+
+    my $command = ["unzip", "-c", $fastqc_zip_file, "\*/summary.txt"];
+    my ($ok, $err, $full_buff, $stdout_buff, $stderr_buff) = run(command => $command);
+    if (!$ok) {
+        die "ERROR while unzipping $fastqc_zip_file!: $err\n";
+    }
+    
+    my @summary_lines = split(/[\r\n]/, join("\n", @$stdout_buff));
+
+    foreach my $this_line (@summary_lines) {
+        if ($this_line =~ /^(PASS|WARN|FAIL)/) {
+            my ($flag, $test, $file) = split("\t", $this_line);
+            if ((($test eq "Basic Statistics") or
+                ($test eq "Per base sequence quality") or
+                ($test eq "Per tile sequence quality") or
+                ($test eq "Per sequence quality scores") or
+                ($test eq "Per base N content") or
+                ($test eq "Adapter Content")) and $flag ne "PASS") {
+                    print STDERR "FastQC failure: $file has a <$flag> for test <$test>\n";
+                    print STDERR " -- The processing for this sample will stop here.\n";
+                    return 0;
+            }
+        }
+    }
+
+    return "true";
+}    
 
 =head2 run_bowtie2
 
