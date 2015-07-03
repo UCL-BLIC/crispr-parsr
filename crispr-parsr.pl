@@ -132,6 +132,8 @@ in the INPUT_DIR.
 
 =item B<Bowtie2>: http://bowtie-bio.sourceforge.net/bowtie2/index.shtml
 
+=item B<R>: http://www.r-project.org
+
 =back
 
 Make sure that these softwares are available on the current path when running this tool.

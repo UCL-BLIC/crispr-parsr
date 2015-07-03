@@ -133,7 +133,7 @@ to embed the images in an automatically generated report for instance.
 
 =over 8
 
-=item B<R>: http://www.cran.org
+=item B<R>: http://www.r-project.org
 
 =back
 
