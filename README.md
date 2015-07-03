@@ -96,6 +96,8 @@ Example (without labels):
 
 **Bowtie2**: http://bowtie-bio.sourceforge.net/bowtie2/index.shtml
 
+**R**: http://www.r-project.org
+
 Make sure that these softwares are available on the current path when running this tool.
 Alternatively, you can hard-code the path at the top of the crispr-parsr.pl script. However
 this does not work for fastqc and cutadapt which are called from within TrimGalore!.
