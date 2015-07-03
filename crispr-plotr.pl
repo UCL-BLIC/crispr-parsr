@@ -1,7 +1,148 @@
 #! /usr/bin/env perl
 use warnings;
 use strict;
+
+use Pod::Usage;
 use Getopt::Long;
+
+=pod
+
+=head1 NAME
+
+crispr-plotr - Software to plot deletions and insertions from a CRISPR resequencing experiment
+
+=head1 SYNOPSIS
+
+crispr-plotr.pl [--ref_seq ref_seq.fa] [--label Sample31] --input crispr.bam --output Sampel31.pdf
+
+=head1 DESCRIPTION
+
+Briefly, this software takes a bam file with overlapping paired-end (PE) reads and call insertions
+and deletions with respect to the reference sequence on the overlap.
+
+From the input set of PE reads, it will filter out any pair where:
+
+=over 8
+
+=item * any of the reads does not map
+
+=item * any of the reads is too short
+
+=item * the reads do not overlap significantly
+
+=item * have mutations or indels before or after the overlap
+
+=item * have more than just a deletion or just an insertion in the overlap
+
+=back
+
+=head1 OPTIONS
+
+Please note that options names may be abbreviated to uniqueness, case does not matter, and a
+single dash is sufficient
+
+=over 8
+
+=item B<-h>|B<--help>
+
+Prints the full help.
+
+=item B<-i>|B<--input crispr.bam>
+
+The BAM filename with the CRISPR aligned PE reads.
+
+=item B<-o>|B<--output FILE.pdf>
+
+By default, the output is PDF file. Other output are available and the filename will the same as
+this one, but with the required extension.
+
+=item B<--label LABEL>
+
+Use this as the sample name for labelling the plots.
+
+=item B<--min-overlap 10>
+
+Minimum overlap between the PE reads. Pairs that do not overlap by at least this length will be
+filtered out.
+
+=item B<--min-length 80>
+
+Minimum length of the reads. If either read is shorter, the pair is filtered out
+
+=item B<--allow-indels>
+
+Do not filter out PE read that have indels in their flanking region, where the flanking region is
+the region outside of the overlap, i.e. covered by one of the reads only.
+
+=item B<--allow-muts>
+
+Do not filter out PE read that have mutations in their flanking region, where the flanking region is
+the region outside of the overlap, i.e. covered by one of the reads only.
+
+=item B<--allow-any>
+
+Sets the B<allow-indels> and B<allow-muts> flags to true.
+
+=item B<--ref-seq>|B<--wt-seq> ref_seq.fa>
+
+This is a simple FASTA file with one sequence only (typically a short one) corresponding to the expected
+wild-type sequence, before editing has ocurred.
+
+    Example:
+    ---------------------------------------
+    >sample_amplicon1_ref_123456
+    AACAGTGGGTCTTCGGGAACCAAGCAGCAGCCATGGGAGGTCTGGCTGTGTTCAGGCT
+    CTGCTCGTGTAGATTCACAGCGCGCTCTGAACCCCCGCTGAGCTACCGATGGAAGAGG
+    AGGAGGTCCTACAGTCGGAGATTCACAGCGCGCTCTGAACCACTTTCAGGAGACTCGA
+    CTATTATGACTTATACGCGATA
+    ---------------------------------------
+
+If not provided, the list of most common events is not displayed.
+
+=item B<--plot-pdf>|B<--pdf> or B<--noplot-pdf>|B<--nopdf>
+
+Enable or disable the PDF output.
+
+Default: PDF output is enabled.
+
+=item B<--plot-png>|B<--png> or B<--plot-nopng>|B<--nopng>
+
+Enable or disable the PNG output.
+
+Default: PNG output is disabled.
+
+=item B<--plot-svg>|B<--svg> or B<--noplot-svg>|B<--nosvg>
+
+Enable or disable the SVG output.
+
+Default: SVG output is disabled.
+
+=item B<--force-plots>
+
+This options controls whether you want to obtain always the same number of plots or not. By default,
+crispr-plotr skips the plots for which there is no data. For instance, the plot for insertions will
+not be generated if there are no insertions in the input BAM file.
+
+By using this option, you are requesting to always get an image even if there are no data.
+Typically the plot will contain a simple message like "No insertions". This is useful if you wish
+to embed the images in an automatically generated report for instance.
+
+=back
+
+=head1 Requirements
+
+=over 8
+
+=item B<R>: http://www.cran.org
+
+=back
+
+=head1 INTERNAL METHODS
+
+The rest of the documentation refers to the internal methods within this software and is
+intended for developers only.
+
+=cut
 
 my $help;
 my $label;
@@ -19,21 +160,6 @@ my $plot_png = 0;
 my $plot_svg = 0;
 my $plot_all = 0;
 my $force_plots = 0;
-my $desc = qq{parse_crispr_pe_bam_file.pl [options] --input in.bam --output out.pdf
-
-Description:
-This script reads a bam file with PE reads and check that the reads overlap and that they match on
-the overlap. All pairs that pass these check are used to look for insertions and deletions.
-
-The output is a set of PDF, PNG, SVG and TXT files with the result of the analysis, mostly different
-plots showing the different deletions and the list of the most common deletions.
-
-Options:
---help: shows this help
---debug: output debugging information
---ref_seq: fasta reference sequence file
-
-};
 
 my $STAT_NO_ALIGNMENT = "No alignment";
 my $STAT_SHORT_READ = "Short read";
@@ -88,7 +214,7 @@ GetOptions(
     "label=s" => \$label,
     "input_file|input-file=s" => \$input_bam_file,
     "output_file|output-file=s" => \$output_pdf_file,
-    "ref_seq|ref-seq=s" => \$ref_seq_file,
+    "ref_seq|ref-seq|wt_file|wt-file|wt_seq|wt-seq=s" => \$ref_seq_file,
     "min_overlap|min-overlap=i" => \$min_overlap,
     "min_length|min-length=i" => \$min_length,
 
@@ -103,9 +229,12 @@ GetOptions(
     "force_plots|force-plots!" => \$force_plots,
     );
 
-if ($help or !$input_bam_file or !$output_pdf_file) {
-    print $desc;
-    exit();
+if ($help) {
+    pod2usage(-verbose=>2);
+}
+
+if (!$input_bam_file or !$output_pdf_file) {
+    pod2usage(-verbose=>1);
 }
 
 if (!$label) {

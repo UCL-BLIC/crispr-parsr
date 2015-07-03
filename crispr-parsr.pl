@@ -38,7 +38,14 @@ Briefly, the pipeline does the following:
 
 =head1 OPTIONS
 
+Please note that options names may be abbreviated to uniqueness, case does not matter, and a
+single dash is sufficient
+
 =over 8
+
+=item B<-h>|B<--help>
+
+Prints the full help.
 
 =item B<--input INPUT_DIR>
 
@@ -50,7 +57,7 @@ The directory where all the FASTQ files are. By default, crispr-parsr will look 
 All files with intermediary data and final plots will be created in this directory. There will be a
 README.txt file explaining the content of each file.
 
-=item B<--wt ref_seq.fa>
+=item B<--ref-seq>|B<--wt-seq> ref_seq.fa>
 
 This is a simple FASTA file with one sequence only (typically a short one) corresponding to the expected
 wild-type sequence, before editing has ocurred.
@@ -157,7 +164,7 @@ GetOptions(
     "help" => \$help,
     "verbose" => \$verbose,
     "input=s" => \$input_dir,
-    "wt_file=s" => \$wt_seq_file,
+    "wt-seq|ref-seq|wt_file=s" => \$wt_seq_file,
     "samples|merge_file=s" => \$merge_file,
     "output=s" => \$output_dir,    
 );
@@ -165,6 +172,11 @@ GetOptions(
 if ($help) {
     pod2usage(-verbose=>2);
 }
+
+if (!$input_dir or !$output_dir) {
+    pod2usage(-verbose=>1);
+}
+
 
 mkdir($output_dir) or die "Cannot create output directory ($output_dir): $!\n";
 
