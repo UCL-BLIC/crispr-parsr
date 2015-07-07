@@ -600,7 +600,7 @@ sub parse_bam_file {
 #             die if ($insertion_length != $insertion_length3);
 #             die if ($insertion_length != $insertion_length4);
             my $position = ($cigar1 =~ /^(\d+)M/)[0] + $pos1;
-            my $deletion_seq = substr($original_seq1, $position, $deletion_length);
+            my ($deletion_seq) = $md1 =~ /^MD:Z:\d+\^([A-Z]+)\d+$/;
             print DATA join("\t", $qname1, "DEL", $deletion_length, $position, $position + $deletion_length, $position + $deletion_length/2, $deletion_seq), "\n";
         } elsif ($md1 =~ /^MD:Z:\d+$/ and $md2 =~ /^MD:Z:\d+$/ and $cigar1 =~ /^\d+M\d*I\d+M$/ and $cigar2 =~ /^\d+M\d*I\d+M$/) { 
             $stats->{$STAT_OK_INSERTION}++;
