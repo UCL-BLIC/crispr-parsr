@@ -975,6 +975,7 @@ plot.topseqs <- function(data) {
         main=paste0('Most common events (', label, ')'))
     ### Add text
     text(0, 1-1:$num_lines/25, cex=0.4, adj=0, family='mono', labels=c('", join("', '", @$top_sequences), "'))
+    par('mar' = mar)
 }
 
 
