@@ -715,11 +715,13 @@ data.ins <- subset(data, event=='INS', select=2:ncol(data))
 num.wt = $wt
 num.del = dim(data.del)[1]
 num.ins = dim(data.ins)[1]
+num.nhej = num.del + num.ins
 num.total = num.wt + num.del + num.ins
 
 perc.wt = paste0(format(100*num.wt/num.total, digits=3),'%')
 perc.del = paste0(format(100*num.del/num.total, digits=3),'%')
 perc.ins = paste0(format(100*num.ins/num.total, digits=3),'%')
+perc.nhej = paste0(format(100*(num.ins+num.del)/num.total, digits=3),'%')
 
 
 # =============================================================================
@@ -953,9 +955,10 @@ plot.pie.chart <- function() {
         text(0, 0, labels=c('No events'))
     }
     if ((sum(as.numeric(my.stats[,2])) > 0) | force.plots) {
-        mtext(paste0('Wild-type (n = ', num.wt, '; ', perc.wt, ')'), side=1, line=0)
-        mtext(paste0('Deletions (n = ', num.del, '; ', perc.del, ')'), side=1, line=1)
-        mtext(paste0('Insertions (n = ', num.ins, '; ', perc.ins, ')'), side=1, line=2)
+        mtext(paste0('Wild-type: n = ', num.wt, '; ', perc.wt), side=1, line=0, adj=0, at=-1.1)
+        mtext(paste0('NHEJ: n = ', num.nhej, '; ', perc.nhej), side=1, line=1, adj=0, at=-1.1)
+        mtext(paste0('Deletions: n = ', num.del, '; ', perc.del), side=1, line=0, adj=0, at=0.1)
+        mtext(paste0('Insertions: n = ', num.ins, '; ', perc.ins), side=1, line=1, adj=0, at=0.1)
     }
 }
 
