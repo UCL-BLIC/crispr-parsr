@@ -272,45 +272,61 @@ foreach my $key (@STAT_ORDER) {
 print "TOTAL: $total\n";
 
 my $top_sequences = [];
+my $ref_seq = "";
 if ($ref_seq_file) {
+    $ref_seq = read_fasta_seq($ref_seq_file);
+
     my $wt = ($stats->{$STAT_OK_WILD_TYPE} or 0);
-    $top_sequences = get_top_sequences($ref_seq_file, $data_file, $wt);
+    $top_sequences = get_top_sequences($ref_seq, $data_file, $wt);
 }
 
-my $R_script = write_R_script($label, $data_file, $top_sequences, $stats, $output_pdf_file);
+my $R_script = write_R_script($label, $data_file, $ref_seq, $top_sequences, $stats, $output_pdf_file);
 
 print qx"Rscript $R_script";
 
 exit(0);
 
 
-=head2 get_top_sequences
+=head2 read_fasta_seq
 
-  Arg[1]        : string $ref_seq_filename
-  Arg[2]        : string $data_filename
-  Arg[3]        : integer $num_of_wild_type_seqs
-  Example       : my $top_sequences = get_top_sequences($ref_seq_file, $$data_file, 1213);
-  Description   : Reads from the $data_file the most common deletions and insertions (up to 10) and
-                  aligns them to the wild-type sequence.
-  Returns       : arrayref of strings
+  Arg[1]        : string $fasta_file
+  Example       : my $seq = read_fasta_seq($fasta_file);
+  Description   : Reads the sequence in the FASTA file $fasta_file
+  Returns       : string $seq
   Exceptions    : Dies if any filename is not found.
 
 =cut
 
-sub get_top_sequences {
-    my ($ref_seq_file, $data_file, $wt) = @_;
-    my $top_sequences = [];
+sub read_fasta_seq {
+    my ($fasta_file) = @_;
+    my $seq;
 
-    ## ------------------------------------------------------------------------------
-    ## Reads the fasta sequence
-    ## ------------------------------------------------------------------------------
-    open(REF, $ref_seq_file) or die;
-    my $ref_seq;
-    while (<REF>) {
+    open(FASTA, $fasta_file) or die;
+    while (<FASTA>) {
         chomp;
         next if (/^>/);
-        $ref_seq .= $_;
+        $seq .= $_;
     }
+
+    return $seq;
+}
+
+=head2 get_top_sequences
+
+  Arg[1]        : string $ref_seq
+  Arg[2]        : string $data_filename
+  Arg[3]        : integer $num_of_wild_type_seqs
+  Example       : my $top_sequences = get_top_sequences($ref_seq, $$data_file, 1213);
+  Description   : Reads from the $data_file the most common deletions and insertions (up to 10) and
+                  aligns them to the wild-type sequence.
+  Returns       : arrayref of strings
+  Exceptions    : 
+
+=cut
+
+sub get_top_sequences {
+    my ($ref_seq, $data_file, $wt) = @_;
+    my $top_sequences = [];
 
 
     ## ------------------------------------------------------------------------------
@@ -643,7 +659,7 @@ sub parse_bam_file {
 =cut
 
 sub write_R_script {
-    my ($label, $data_file, $top_sequences, $stats, $output_pdf_file) = @_;
+    my ($label, $data_file, $ref_seq, $top_sequences, $stats, $output_pdf_file) = @_;
 
     my $num_lines = @$top_sequences;
     my $R_script = $data_file;
@@ -673,6 +689,8 @@ force.plots = $force_plots
 plot.pdf = $plot_pdf
 plot.png = $plot_png
 plot.svg = $plot_svg
+
+ref.seq = '$ref_seq'
 
 label = '$label'
 
@@ -800,10 +818,12 @@ plot.size.histograms <- function(data.del, data.ins) {
 #  The histograms are for the location of the mid-point of the deletions and
 #  insertions.
 # =============================================================================
-plot.location.images <- function(data.del, data.ins) {
+plot.location.images <- function(data.del, data.ins, ref.seq='') {
+
     ### Use same breaks (x-axis) for all 3 plots. Make sure the range spans at least 10 bp.
     if (length(data.del[,4]) + length(data.ins[,4]) > 0 ) {
-        breaks = (min(data.del[,4],data.ins[,4], na.rm=T)-1):max(data.del[,4], data.ins[,4], na.rm=T)+1
+        ## For upper limit, use data.ins[,4]+1 as insertions mid-points are 0.5 before the insertion
+        breaks = as.integer(min(data.del[,4],data.ins[,4], na.rm=T)-1):max(data.del[,4], data.ins[,4]+1, na.rm=T)+1
     } else {
         breaks = 1:10
     }
@@ -817,7 +837,7 @@ plot.location.images <- function(data.del, data.ins) {
     ### Get the histograms for deletions and insertions, using the set breaks. Store the
     ### result instead of plotting it.
     h.del = hist(as.numeric(data.del[,4]), breaks=breaks, plot=F);
-    h.ins = hist(as.numeric(data.ins[,4]), breaks=breaks, plot=F);
+    h.ins = hist(as.numeric(data.ins[,4]), breaks=(breaks-0.5)[1:length(breaks)-1], plot=F);
 
     ### Cosmetic variables
     ylim.max = 1.04*max(h.del\$counts, h.ins\$counts)
@@ -826,21 +846,35 @@ plot.location.images <- function(data.del, data.ins) {
     xlab.ins = paste0('Location of Insertions (n = ', num.ins, '; ', perc.ins, ')')
     ylab='counts'
 
+    ### Coordinates are 1-based inclusive. starts array marks the start of the nucleotide. For
+    ### instance, bp 100 starts at 100 and finishes at 100+1. We use starts for the deletions
+    ### and for the sequence. The insertions happen necessarily in between two nucleotides and
+    ### this is why we use the mid-points for these.
+    starts = breaks[1]:breaks[length(breaks)-1]
+
     ### Plot histogram for deletions only (if any)
-    main=paste0('Midpoint location of the deletions (', label, ')')
+    main=paste0('Location of the deletions (', label, ')')
     if (num.del > 0) {
         plot(h.del\$counts, xlim=xlim, type='n', xlab=xlab.del, ylab=ylab, main=main)
-        rect(h.del\$mids, 0, h.del\$mids+1, h.del\$counts, col=col.del)
+        rect(starts, 0, starts+1, h.del\$counts, col=col.del)
+        if (nchar(ref.seq) > 0) {
+            cex = 40/max(40, xlim[2]-xlim[1]+1)
+            text(starts+0.5, rep(0, xlim[2]-xlim[1]+1), strsplit(substr(ref.seq, xlim[1], xlim[2]-1), '')[[1]], adj=c(0.5,1.3), cex=cex)
+        }
     } else if (force.plots) {
         plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
         text(0, 0, labels=c('No deletions'))
     }
 
     ### Plot histogram for insertions only (if any)
-    main=paste0('Midpoint location of the insertions (', label, ')')
+    main=paste0('Location of the insertions (', label, ')')
     if (num.ins) {
-        plot(h.ins\$counts, xlim=xlim, type='n', xlab=xlab.del, ylab=ylab, main=main)
-        rect(h.ins\$mids, 0, h.ins\$mids+1, h.ins\$counts, col=col.ins)
+        plot(h.ins\$counts, xlim=xlim, type='n', xlab=xlab.ins, ylab=ylab, main=main)
+        rect(h.ins\$mids+0.5, 0, h.ins\$mids+1.5, h.ins\$counts, col=col.ins)
+        if (nchar(ref.seq) > 0) {
+            cex = 40/max(40, xlim[2]-xlim[1]+1)
+            text(starts+0.5, rep(0, xlim[2]-xlim[1]+1), strsplit(substr(ref.seq, xlim[1], xlim[2]-1), '')[[1]], adj=c(0.5,1.3), cex=cex)
+        }
     } else if (force.plots) {
         plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
         text(0, 0, labels=c('No insertions'))
@@ -852,9 +886,26 @@ plot.location.images <- function(data.del, data.ins) {
     par('mar' = c(mar[1]-0.5, mar[2], mar[3]+3, mar[4]))
     # Plot the data
     plot(h.del\$counts, xlim=xlim, type='n', xlab=NA, ylab=ylab,
-        main=NA, ylim=c(-ylim.max, ylim.max));
-    rect(h.del\$mids, 0, h.del\$mids+1, h.del\$counts, col=col.del)
-    rect(h.ins\$mids, 0, h.ins\$mids+1, -h.ins\$counts, col=col.ins)
+        main=NA, ylim=c(-ylim.max, ylim.max), yaxt='n');
+    if (nchar(ref.seq) > 0) {
+        factor = 10/100*40/max(40, xlim[2]-xlim[1]+1)
+        usr = par('usr');
+        par('usr' = c(usr[1], usr[2], usr[3]*(1+factor), usr[4]))
+        ax.ticks = axTicks(2);
+        axis(2, col=dark.col.del, col.axis=dark.col.del, at=subset(ax.ticks, ax.ticks>=0))
+        rect(starts, 0, starts+1, h.del\$counts, col=col.del)
+        cex = 40/max(40, xlim[2]-xlim[1]+1)
+        text(starts+0.5, rep(0, xlim[2]-xlim[1]+1), strsplit(substr(ref.seq, xlim[1], xlim[2]-1), '')[[1]], adj=c(0.5,1.4), cex=cex)
+        par('usr' = c(usr[1], usr[2], usr[3], usr[4] *(1+factor)))
+        axis(2, col=dark.col.ins, col.axis=dark.col.ins, at=subset(ax.ticks, ax.ticks<=0))
+        rect(h.ins\$mids+0.5, 0, h.ins\$mids+1.5, -h.ins\$counts, col=col.ins)
+    } else {
+        ax.ticks = axTicks(2);
+        axis(2, col=dark.col.del, col.axis=dark.col.del, at=subset(ax.ticks, ax.ticks>=0))
+        rect(h.del\$mids-1, 0, h.del\$mids, h.del\$counts, col=col.del)
+        axis(2, col=dark.col.ins, col.axis=dark.col.ins, at=subset(ax.ticks, ax.ticks<=0))
+        rect(h.ins\$breaks, 0, h.ins\$breaks+1, c(-h.ins\$counts,0), col=col.ins)
+    }
     # Add the top axis
     axis(3)
     # Write the main title (as an mtext so we can have it a little higher than by default)
@@ -916,17 +967,27 @@ plot.deletion.frequencies <- function(data) {
 
     ### Genereate the plot
     # empty plot
-    plot(del, xlim=c(min(range\$from-1),max(range\$to)+1), type='n',
+    xlim = c(min(range\$from),max(range\$to)+1)
+    plot(del, xlim=xlim, type='n',
         main=main,
         xlab='Location of deleted bp', ylab='counts')
     # add light blue rectangles with white background
-    rect(min(range\$from):max(range\$to)-0.5, 0, min(range\$from):max(range\$to)+0.5,
+    rect(min(range\$from):max(range\$to), 0, min(range\$from):max(range\$to)+1,
         del[min(range\$from):max(range\$to)], col=col.del, border='white')
     # add a black line around the profile of deletion frequencies
-    lines(min(range\$from):max(range\$to)-0.5,
-        del[min(range\$from):max(range\$to)], type='s', col='black')
-}
+    lines(c(min(range\$from), min(range\$from):(max(range\$to)+1),min(range\$from)),
+        c(0, del[min(range\$from):max(range\$to)], 0, 0), type='s', col='black')
+    # Add ref sequence if available
+        if (nchar(ref.seq) > 0) {
+            cex = 40/max(40, xlim[2]-xlim[1]+1)
+            text(xlim[1]:(xlim[2]-1)+0.5, rep(0, xlim[2]-xlim[1]+1), strsplit(substr(ref.seq, xlim[1], xlim[2]-1), '')[[1]], adj=c(0.5,1.3), cex=cex)
+        }
+#     if (nchar(ref.seq) > 0) {
+#         cex = 40/max(40, xlim[2]-xlim[1]+1)
+#         text(xlim[1]:xlim[2], rep(0, xlim[2]-xlim[1]+1), strsplit(substr(ref.seq, xlim[1], xlim[2]), '')[[1]], adj=c(0.5,1.2),cex=cex)
+#     }
 
+}
 
 # =============================================================================
 #  FUNCTION plot.pie.chart
@@ -1002,7 +1063,7 @@ plot.figures <- function() {
      if (force.plots | num.del+num.ins > 0) {
     
         plot.size.histograms(data.del, data.ins)
-        plot.location.images(data.del, data.ins)
+        plot.location.images(data.del, data.ins, ref.seq=ref.seq)
         plot.deletion.frequencies(data.del)
 
     }
