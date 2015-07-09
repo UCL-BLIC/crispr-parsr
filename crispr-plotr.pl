@@ -332,8 +332,8 @@ sub get_top_sequences {
     ## ------------------------------------------------------------------------------
     ## Reads and extract stats on most common deletions and insertions:
     ## ------------------------------------------------------------------------------
-    my @del_lines = qx"more $data_file | awk '\$2 == \"DEL\" { print \$3, \$4, \$7}' | sort | uniq -c | sort -rn | head -n 10";
-    my @ins_lines = qx"more $data_file | awk '\$2 == \"INS\" { print \$3, \$4, \$7}' | sort | uniq -c | sort -rn | head -n 10";
+    my @del_lines = qx"more $data_file | awk '\$2 == \"DEL\" { print \$3, \$4, \$7}' | sort | uniq -c | sort -rn";
+    my @ins_lines = qx"more $data_file | awk '\$2 == \"INS\" { print \$3, \$4, \$7}' | sort | uniq -c | sort -rn";
 
 
     ## ------------------------------------------------------------------------------
@@ -380,11 +380,18 @@ sub get_top_sequences {
     ## ------------------------------------------------------------------------------
     ## Most common deletions
     ## ------------------------------------------------------------------------------
+    my @del_sequences;
     foreach my $this_line (@del_lines) {
         my ($num, $del_length, $from, $seq) = $this_line =~ /(\d+)\s(\-?\d+)\s(\d+)\s(\w+)/;
         my $aligned_seq = substr($ref_seq, $min_from, $from-$min_from-1) . '-'x$del_length . substr($ref_seq, ($from+$del_length-1), $max_to - ($from+$del_length-1));
-        push(@$top_sequences, sprintf($format, $aligned_seq, $num, "DEL", $del_length, $from, $seq));
+        push(@del_sequences, sprintf($format, $aligned_seq, $num, "DEL", $del_length, $from, $seq));
     }
+    my $deletions_file = $data_file;
+    $deletions_file =~ s/\.txt$/.del.txt/;
+    open(DEL, ">$deletions_file") or die;
+    print DEL join("\n", $header, $wt_sequence, "", @del_sequences, "");
+    close(DEL);
+    push(@$top_sequences, splice(@del_sequences, 0, 20));
 
 
     ## ------------------------------------------------------------------------------
@@ -396,12 +403,19 @@ sub get_top_sequences {
     ## ------------------------------------------------------------------------------
     ## Most common insertions
     ## ------------------------------------------------------------------------------
+    my @ins_sequences;
     foreach my $this_line (@ins_lines) {
         my ($num, $ins_length, $from, $seq) = $this_line =~ /(\d+)\s(\-?\d+)\s(\d+)\s(\w+)/;
         my $aligned_seq = substr($ref_seq, $min_from, $max_to-$min_from);
         substr($aligned_seq, $from-$min_from-2, 2, "><");
-        push(@$top_sequences, sprintf($format, $aligned_seq, $num, "INS", $ins_length, $from, ">$seq<"));
+        push(@ins_sequences, sprintf($format, $aligned_seq, $num, "INS", $ins_length, $from, ">$seq<"));
     }
+    my $insertions_file = $data_file;
+    $insertions_file =~ s/\.txt$/.ins.txt/;
+    open(INS, ">$insertions_file") or die;
+    print INS join("\n", $header, $wt_sequence, "", @ins_sequences, "");
+    close(INS);
+    push(@$top_sequences, splice(@ins_sequences, 0, 20));
 
     # Print this on the standard output
     print "\n", join("\n", @$top_sequences), "\n";
@@ -1033,12 +1047,12 @@ plot.pie.chart <- function() {
 plot.topseqs <- function(data) {
     ### Use smaller top and bottom margins
     mar = par('mar')
-    par('mar' = c(mar[1],1,mar[3],1))
+    par('mar' = c(mar[1],1,mar[3],0.1))
     ### Initiate plot
     plot(NA,xlim=c(0,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA,
         main=paste0('Most common events (', label, ')'))
     ### Add text
-    text(0, 1-1:$num_lines/25, cex=0.4, adj=0, family='mono', labels=c('", join("', '", @$top_sequences), "'))
+    text(0, 1-1:$num_lines/28, cex=0.3, adj=0, family='mono', labels=c('", join("', '", @$top_sequences), "'))
     par('mar' = mar)
 }
 
