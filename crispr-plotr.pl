@@ -69,6 +69,19 @@ this one, but with the required extension.
 
 Use this as the sample name for labelling the plots.
 
+=item B<--guide-seq> guide_seq.fa>
+
+This is a simple FASTA file (header is optional) with one sequence only (typically a very short one)
+corresponding to the guide sequence. It must match perfectly the reference sequence.
+
+You can either provide the full path to the file or simply the name of the file if it is located
+in the INPUT_DIR.
+
+    Example:
+    ---------------------------------------
+    AGGAGGTCCTA
+    ---------------------------------------
+
 =item B<--min-overlap 10>
 
 Minimum overlap between the PE reads. Pairs that do not overlap by at least this length will be
@@ -159,6 +172,7 @@ my $input_bam_file;
 my $output_pdf_file;
 my $debug;
 my $ref_seq_file;
+my $guide_seq_file;
 my $min_overlap = 10;
 my $min_length = 80;
 my $allow_indels = 0;
@@ -224,6 +238,7 @@ GetOptions(
     "input_file|input-file=s" => \$input_bam_file,
     "output_file|output-file=s" => \$output_pdf_file,
     "ref_seq|ref-seq|wt_file|wt-file|wt_seq|wt-seq=s" => \$ref_seq_file,
+    "guide_seq|guide-seq=s" => \$guide_seq_file,
     "min_overlap|min-overlap=i" => \$min_overlap,
     "min_length|min-length=i" => \$min_length,
 
@@ -273,14 +288,19 @@ print "TOTAL: $total\n";
 
 my $top_sequences = [];
 my $ref_seq = "";
+my $guide_seq = "";
 if ($ref_seq_file) {
     $ref_seq = read_fasta_seq($ref_seq_file);
+    
+    if ($guide_seq_file) {
+        $guide_seq = read_fasta_seq($guide_seq_file);
+    }
 
     my $wt = ($stats->{$STAT_OK_WILD_TYPE} or 0);
-    $top_sequences = get_top_sequences($ref_seq, $data_file, $wt);
+    $top_sequences = get_top_sequences($ref_seq, $guide_seq, $data_file, $wt);
 }
 
-my $R_script = write_R_script($label, $data_file, $ref_seq, $top_sequences, $stats, $output_pdf_file);
+my $R_script = write_R_script($label, $data_file, $ref_seq, $guide_seq, $top_sequences, $stats, $output_pdf_file);
 
 print qx"Rscript $R_script";
 
@@ -314,20 +334,38 @@ sub read_fasta_seq {
 =head2 get_top_sequences
 
   Arg[1]        : string $ref_seq
-  Arg[2]        : string $data_filename
-  Arg[3]        : integer $num_of_wild_type_seqs
-  Example       : my $top_sequences = get_top_sequences($ref_seq, $$data_file, 1213);
+  Arg[2]        : string $guide_seq
+  Arg[3]        : string $data_filename
+  Arg[4]        : integer $num_of_wild_type_seqs
+  Example       : my $top_sequences = get_top_sequences($ref_seq, $guide_seq, $data_file, 1213);
   Description   : Reads from the $data_file the most common deletions and insertions (up to 10) and
-                  aligns them to the wild-type sequence.
+                  aligns them to the wild-type sequence. Highlights the guide seq if provided.
   Returns       : arrayref of strings
-  Exceptions    : 
+  Exceptions    : prints WARNING if $guide_seq does not match $ref_seq
 
 =cut
 
 sub get_top_sequences {
-    my ($ref_seq, $data_file, $wt) = @_;
+    my ($ref_seq, $guide_seq, $data_file, $wt) = @_;
     my $top_sequences = [];
 
+
+    ## ------------------------------------------------------------------------------
+    ## Highlight the guide sequence (if provided) as uppercase vs lowercase
+    ## ------------------------------------------------------------------------------
+    my $guide_start;
+    if ($guide_seq) {
+        $guide_start = index($ref_seq, $guide_seq);
+        if ($guide_start >= 0) {
+            substr($ref_seq, 0, $guide_start) = lc(substr($ref_seq, 0, $guide_start));
+            substr($ref_seq, $guide_start+length($guide_seq)) = lc(substr($ref_seq, $guide_start+length($guide_seq)));
+            print $ref_seq,"\n";
+        } else {
+            print STDERR "======================================================================\n";
+            print STDERR "WARNING: guide sequence ('$guide_seq') not found in amplicon sequence\n";
+            print STDERR "======================================================================\n";
+        }
+    }
 
     ## ------------------------------------------------------------------------------
     ## Reads and extract stats on most common deletions and insertions:
@@ -659,12 +697,13 @@ sub parse_bam_file {
 
   Arg[1]        : string $label
   Arg[2]        : string $data_filename
-  Arg[3]        : arrayref $top_sequences
-  Arg[4]        : hashref $stats
-  Arg[5]        : num $wt
-  Arg[5]        : string $output_pdf_file
-  Example       : my $R_file = write_R_script("test", "file.bam.data.txt", $stats, $top_sequences,
-                    3123, "test.pdf")
+  Arg[3]        : string $ref_seq
+  Arg[4]        : string $guide_seq
+  Arg[5]        : arrayref $top_sequences
+  Arg[6]        : hashref $stats
+  Arg[7]        : string $output_pdf_file
+  Example       : my $R_file = write_R_script("test", "file.bam.data.txt", "ACTGTGCATGGAATTGGGAACC",
+                    "GAATTGG", $top_sequences, $stats, "test.pdf")
   Description   : Creates an R script to plot all the insertions and deletions in PDF, PNG and SVG
                   format
   Returns       : string with the filename with the resulting R code
@@ -673,7 +712,7 @@ sub parse_bam_file {
 =cut
 
 sub write_R_script {
-    my ($label, $data_file, $ref_seq, $top_sequences, $stats, $output_pdf_file) = @_;
+    my ($label, $data_file, $ref_seq, $guide_seq, $top_sequences, $stats, $output_pdf_file) = @_;
 
     my $num_lines = @$top_sequences;
     my $R_script = $data_file;
@@ -704,7 +743,13 @@ plot.pdf = $plot_pdf
 plot.png = $plot_png
 plot.svg = $plot_svg
 
+# =============================================================================
+#  Sequences
+# =============================================================================
 ref.seq = '$ref_seq'
+guide.seq = '$guide_seq'
+guide.start = regexpr(guide.seq, ref.seq, fixed=T)[1];
+guide.length = nchar(guide.seq)
 
 label = '$label'
 
@@ -870,11 +915,14 @@ plot.location.images <- function(data.del, data.ins, ref.seq='') {
     main=paste0('Location of the deletions (', label, ')')
     if (num.del > 0) {
         plot(h.del\$counts, xlim=xlim, type='n', xlab=xlab.del, ylab=ylab, main=main)
-        rect(starts, 0, starts+1, h.del\$counts, col=col.del)
         if (nchar(ref.seq) > 0) {
             cex = 40/max(40, xlim[2]-xlim[1]+1)
+            if (guide.start > 0 && guide.length > 0) {
+                rect(starts[1] + guide.start - xlim[1], par('usr')[3]*0.975, starts[1] + guide.start - xlim[1] + guide.length, 0, col='grey', border=F)
+            }
             text(starts+0.5, rep(0, xlim[2]-xlim[1]+1), strsplit(substr(ref.seq, xlim[1], xlim[2]-1), '')[[1]], adj=c(0.5,1.3), cex=cex)
         }
+        rect(starts, 0, starts+1, h.del\$counts, col=col.del)
     } else if (force.plots) {
         plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
         text(0, 0, labels=c('No deletions'))
@@ -884,11 +932,14 @@ plot.location.images <- function(data.del, data.ins, ref.seq='') {
     main=paste0('Location of the insertions (', label, ')')
     if (num.ins) {
         plot(h.ins\$counts, xlim=xlim, type='n', xlab=xlab.ins, ylab=ylab, main=main)
-        rect(h.ins\$mids+0.5, 0, h.ins\$mids+1.5, h.ins\$counts, col=col.ins)
         if (nchar(ref.seq) > 0) {
+            if (guide.start > 0 && guide.length > 0) {
+                rect(starts[1] + guide.start - xlim[1], par('usr')[3]*0.975, starts[1] + guide.start - xlim[1] + guide.length, 0, col='grey', border=F)
+            }
             cex = 40/max(40, xlim[2]-xlim[1]+1)
             text(starts+0.5, rep(0, xlim[2]-xlim[1]+1), strsplit(substr(ref.seq, xlim[1], xlim[2]-1), '')[[1]], adj=c(0.5,1.3), cex=cex)
         }
+        rect(h.ins\$mids+0.5, 0, h.ins\$mids+1.5, h.ins\$counts, col=col.ins)
     } else if (force.plots) {
         plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
         text(0, 0, labels=c('No insertions'))
@@ -905,6 +956,9 @@ plot.location.images <- function(data.del, data.ins, ref.seq='') {
         factor = 10/100*40/max(40, xlim[2]-xlim[1]+1)
         usr = par('usr');
         par('usr' = c(usr[1], usr[2], usr[3]*(1+factor), usr[4]))
+        if (guide.start > 0 && guide.length > 0) {
+            rect(starts[1] + guide.start - xlim[1], -par('usr')[4]*factor, starts[1] + guide.start - xlim[1] + guide.length, 0, col='grey', border=F)
+        }
         ax.ticks = axTicks(2);
         axis(2, col=dark.col.del, col.axis=dark.col.del, at=subset(ax.ticks, ax.ticks>=0))
         rect(starts, 0, starts+1, h.del\$counts, col=col.del)
@@ -985,17 +1039,20 @@ plot.deletion.frequencies <- function(data) {
     plot(del, xlim=xlim, type='n',
         main=main,
         xlab='Location of deleted bp', ylab='counts')
+    # Add ref sequence if available
+    if (nchar(ref.seq) > 0) {
+        if (guide.start > 0 && guide.length > 0) {
+            rect(guide.start, par('usr')[3]*0.975, guide.start + guide.length, 0, col='grey', border=F)
+        }
+        cex = 40/max(40, xlim[2]-xlim[1]+1)
+        text(xlim[1]:(xlim[2]-1)+0.5, rep(0, xlim[2]-xlim[1]+1), strsplit(substr(ref.seq, xlim[1], xlim[2]-1), '')[[1]], adj=c(0.5,1.3), cex=cex)
+    }
     # add light blue rectangles with white background
     rect(min(range\$from):max(range\$to), 0, min(range\$from):max(range\$to)+1,
         del[min(range\$from):max(range\$to)], col=col.del, border='white')
     # add a black line around the profile of deletion frequencies
     lines(c(min(range\$from), min(range\$from):(max(range\$to)+1),min(range\$from)),
         c(0, del[min(range\$from):max(range\$to)], 0, 0), type='s', col='black')
-    # Add ref sequence if available
-        if (nchar(ref.seq) > 0) {
-            cex = 40/max(40, xlim[2]-xlim[1]+1)
-            text(xlim[1]:(xlim[2]-1)+0.5, rep(0, xlim[2]-xlim[1]+1), strsplit(substr(ref.seq, xlim[1], xlim[2]-1), '')[[1]], adj=c(0.5,1.3), cex=cex)
-        }
 #     if (nchar(ref.seq) > 0) {
 #         cex = 40/max(40, xlim[2]-xlim[1]+1)
 #         text(xlim[1]:xlim[2], rep(0, xlim[2]-xlim[1]+1), strsplit(substr(ref.seq, xlim[1], xlim[2]), '')[[1]], adj=c(0.5,1.2),cex=cex)
@@ -1114,3 +1171,5 @@ if (plot.svg) {
     
     return($R_script);
 }
+
+=pod

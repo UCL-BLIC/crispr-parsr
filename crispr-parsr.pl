@@ -77,6 +77,19 @@ in the INPUT_DIR.
     CTATTATGACTTATACGCGATA
     ---------------------------------------
 
+=item B<--guide-seq> guide_seq.fa>
+
+This is a simple FASTA file (header is optional) with one sequence only (typically a very short one)
+corresponding to the guide sequence. It must match perfectly the reference sequence.
+
+You can either provide the full path to the file or simply the name of the file if it is located
+in the INPUT_DIR.
+
+    Example:
+    ---------------------------------------
+    AGGAGGTCCTA
+    ---------------------------------------
+
 =item B<--samples merge.txt>
 
 This file contains the relation of FASTQ files for each sample. As the pipeline has been designed for
@@ -166,6 +179,7 @@ my $help;
 my $verbose;
 my $input_dir;
 my $wt_seq_file;
+my $guide_seq_file;
 my $merge_file;
 my $output_dir;
 my $trim_galore = "trim_galore";
@@ -179,6 +193,7 @@ GetOptions(
     "verbose" => \$verbose,
     "input=s" => \$input_dir,
     "wt-seq|ref-seq|wt_file=s" => \$wt_seq_file,
+    "guide_seq|guide-seq=s" => \$guide_seq_file,
     "samples|merge_file=s" => \$merge_file,
     "output=s" => \$output_dir,    
 );
@@ -200,6 +215,8 @@ create_readme_file($output_dir);
 
 my $this_wt_seq_file = get_file_from_input_dir($input_dir, ".fa", $wt_seq_file);
 
+my $this_guide_seq_file = get_file_from_input_dir($input_dir, ".fa", $guide_seq_file) if ($guide_seq_file);
+
 my $bowtie2_index_file = index_genome($bowtie2_build_exe, $this_wt_seq_file, $output_dir);
 
 my $this_merge_file = get_file_from_input_dir($input_dir, ".txt", $merge_file);
@@ -210,7 +227,7 @@ my $validated_files = run_trim_galore($trim_galore, $merged_files, $output_dir);
 
 my $bam_files = run_bowtie2($bowtie2_exe, $bowtie2_index_file, $validated_files, $output_dir);
 
-run_plotr($plotr, $bam_files, $this_wt_seq_file, $output_dir);
+run_plotr($plotr, $bam_files, $this_wt_seq_file, $this_guide_seq_file, $output_dir);
 
 
 =head2 create_readme_file
@@ -613,13 +630,15 @@ sub run_bowtie2 {
 =cut
 
 sub run_plotr {
-    my ($plotr, $bam_files, $this_wt_seq_file, $output_dir) = @_;
+    my ($plotr, $bam_files, $this_wt_seq_file, $this_guide_seq_file, $output_dir) = @_;
 
     while (my ($label, $this_bam_file) = each %$bam_files) {
         my $this_pdf_file = "$output_dir/$label.out.pdf";
         my $this_txt_file = "$output_dir/$label.out.txt";
         my $command = [$plotr, "--input", $this_bam_file, "--out", $this_pdf_file, "--ref_seq", $this_wt_seq_file,
-                        "--label", $label, ">", $this_txt_file];
+                        "--label", $label];
+        push(@$command, "--guide-seq", $this_guide_seq_file) if ($this_guide_seq_file);
+        push(@$command, ">", $this_txt_file);
         my ($ok, $err, $full_buff, $stdout_buff, $stderr_buff) = run(command => $command);
         if (!$ok) {
             die "ERROR while running plotr: $err\n";
