@@ -570,7 +570,7 @@ sub parse_bam_file {
             }
             ($initial_match) = $md2 =~ /^MD:Z:(\d*)/;
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
-            if (!$allow_muts and $initial_match < $diff_in_ref_bp) {
+            if (!$allow_muts and (!defined($initial_match) or $initial_match < $diff_in_ref_bp)) {
                 # Indels in the 5' non-overlapping sequence: ignore the pair!
                 $stats->{$STAT_MUTATION_5_PRIME}++;
                 next;
@@ -582,7 +582,7 @@ sub parse_bam_file {
             my $diff_in_ref_bp = $pos2 - $pos1;
             my ($initial_match) = $cigar1 =~ /^(\d*)M/;
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
-            if (!$allow_indels and $initial_match < $diff_in_ref_bp) {
+            if (!$allow_indels and (!defined($initial_match) or $initial_match < $diff_in_ref_bp)) {
                 # Indels in the 5' non-overlapping sequence: ignore the pair!
                 $stats->{$STAT_INDEL_5_PRIME}++;
                 next;
@@ -626,14 +626,14 @@ sub parse_bam_file {
             my $diff_in_ref_bp = $end2 - $end1;
             my ($last_match) = $cigar2 =~ /(\d*)M$/;
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
-            if (!$allow_indels and ($last_match < $diff_in_ref_bp)) {
+            if (!$allow_indels and (!defined($last_match) or ($last_match < $diff_in_ref_bp))) {
                 # Indels in the 3' non-overlapping sequence: ignore the pair!
                 $stats->{$STAT_INDEL_3_PRIME}++;
                 next;
             }
             ($last_match) = $md2 =~ /(\d*)$/;
 #             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
-            if (!$allow_muts and ($last_match < $diff_in_ref_bp)) {
+            if (!$allow_muts and (!defined($last_match) or $last_match < $diff_in_ref_bp)) {
                 # Indels in the 3' non-overlapping sequence: ignore the pair!
                 $stats->{$STAT_MUTATION_3_PRIME}++;
                 next;
@@ -667,20 +667,19 @@ sub parse_bam_file {
 #             die if ($insertion_length != $insertion_length2);
 #             die if ($insertion_length != $insertion_length3);
 #             die if ($insertion_length != $insertion_length4);
-            my $position = ($cigar1 =~ /^(\d+)M/)[0] + $pos1;
+            my $read_position = ($cigar1 =~ /^(\d+)M/)[0];
             my ($deletion_seq) = $md1 =~ /^MD:Z:\d+\^([A-Z]+)\d+$/;
-            print DATA join("\t", $qname1, "DEL", $deletion_length, $position, $position + $deletion_length, $position + $deletion_length/2, $deletion_seq), "\n";
+            print DATA join("\t", $qname1, "DEL", $deletion_length, $read_position + $pos1, $read_position + $pos1 + $deletion_length - 1, $read_position + $pos1  + ($deletion_length - 1)/2, $deletion_seq), "\n";
         } elsif ($md1 =~ /^MD:Z:\d+$/ and $md2 =~ /^MD:Z:\d+$/ and $cigar1 =~ /^\d+M\d*I\d+M$/ and $cigar2 =~ /^\d+M\d*I\d+M$/) { 
             $stats->{$STAT_OK_INSERTION}++;
             my ($insertion_length) = $cigar1 =~ /(\d+)I/;
-            my $position = ($cigar1 =~ /^(\d+)M/)[0] + $pos1;
-            my $insertion_seq = substr($original_seq1, $position, $insertion_length);
-            print DATA join("\t", $qname1, "INS", $insertion_length, $position + 1, $position, $position + 1/2, $insertion_seq), "\n";
+            my $read_position = ($cigar1 =~ /^(\d+)M/)[0];
+            my $insertion_seq = substr($original_seq1, $read_position, $insertion_length);
+            print DATA join("\t", $qname1, "INS", $insertion_length, $read_position + $pos1, $read_position + $pos1 - 1, $read_position + $pos1 - 1/2, $insertion_seq), "\n";
         } elsif ($md1 =~ /^MD:Z:\d+$/ and $md2 =~ /^MD:Z:\d+$/ and $cigar1 =~ /^\d+M$/ and $cigar2 =~ /^\d+M$/) {
             $stats->{$STAT_OK_WILD_TYPE}++;
             next;
         } else {
-#             print join("\t", $cigar1, $md1, $cigar2, $md2), "\n";
             $stats->{$STAT_OTHER_MISMATCHES}++;
             next;
         }
@@ -882,7 +881,7 @@ plot.location.images <- function(data.del, data.ins, ref.seq='') {
     ### Use same breaks (x-axis) for all 3 plots. Make sure the range spans at least 10 bp.
     if (length(data.del[,4]) + length(data.ins[,4]) > 0 ) {
         ## For upper limit, use data.ins[,4]+1 as insertions mid-points are 0.5 before the insertion
-        breaks = as.integer(min(data.del[,4],data.ins[,4], na.rm=T)-1):max(data.del[,4], data.ins[,4]+1, na.rm=T)+1
+        breaks = as.integer(min(data.del[,4],data.ins[,4], na.rm=T)):(max(data.del[,4], data.ins[,4]+1, na.rm=T)+1)
     } else {
         breaks = 1:10
     }
@@ -895,12 +894,14 @@ plot.location.images <- function(data.del, data.ins, ref.seq='') {
 
     ### Get the histograms for deletions and insertions, using the set breaks. Store the
     ### result instead of plotting it.
-    h.del = hist(as.numeric(data.del[,4]), breaks=breaks, plot=F);
-    h.ins = hist(as.numeric(data.ins[,4]), breaks=(breaks-0.5)[1:length(breaks)-1], plot=F);
+    h.del = hist(as.numeric(data.del[,4]), breaks=breaks, right=F, plot=F);
+    ### All mid-points for insertions are n+0.5 by definition:
+    breaks.ins = (breaks+0.5)[1:length(breaks)-1]
+    h.ins = hist(as.numeric(data.ins[,4]), breaks=breaks.ins, right=F, plot=F);
 
     ### Cosmetic variables
     ylim.max = 1.04*max(h.del\$counts, h.ins\$counts)
-    xlim = c(breaks[1],breaks[length(breaks)])
+    xlim = c(breaks[1],breaks[length(breaks)]-1)
     xlab.del = paste0('Location of Deletions (n = ', num.del, '; ', perc.del, ')')
     xlab.ins = paste0('Location of Insertions (n = ', num.ins, '; ', perc.ins, ')')
     ylab='counts'
@@ -910,6 +911,7 @@ plot.location.images <- function(data.del, data.ins, ref.seq='') {
     ### and for the sequence. The insertions happen necessarily in between two nucleotides and
     ### this is why we use the mid-points for these.
     starts = breaks[1]:breaks[length(breaks)-1]
+    starts.ins = breaks.ins[1]:breaks.ins[length(breaks.ins)-1]
 
     ### Plot histogram for deletions only (if any)
     main=paste0('Location of the deletions (', label, ')')
@@ -918,11 +920,11 @@ plot.location.images <- function(data.del, data.ins, ref.seq='') {
         if (nchar(ref.seq) > 0) {
             cex = 40/max(40, xlim[2]-xlim[1]+1)
             if (guide.start > 0 && guide.length > 0) {
-                rect(starts[1] + guide.start - xlim[1], par('usr')[3]*0.975, starts[1] + guide.start - xlim[1] + guide.length, 0, col='grey', border=F)
+                rect(starts[1] + guide.start - xlim[1] - 0.5, par('usr')[3]*0.975, starts[1] + guide.start - xlim[1] + guide.length - 0.5, 0, col='grey', border=F)
             }
-            text(starts+0.5, rep(0, xlim[2]-xlim[1]+1), strsplit(substr(ref.seq, xlim[1], xlim[2]-1), '')[[1]], adj=c(0.5,1.3), cex=cex)
+            text(xlim[1]:xlim[2], rep(0, xlim[2]-xlim[1]+1), strsplit(substr(ref.seq, xlim[1], xlim[2]), '')[[1]], adj=c(0.5,1.3), cex=cex)
         }
-        rect(starts, 0, starts+1, h.del\$counts, col=col.del)
+        rect(starts - 0.5, 0, starts+0.5, h.del\$counts, col=col.del, border=h.del\$counts>0)
     } else if (force.plots) {
         plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
         text(0, 0, labels=c('No deletions'))
@@ -934,12 +936,12 @@ plot.location.images <- function(data.del, data.ins, ref.seq='') {
         plot(h.ins\$counts, xlim=xlim, type='n', xlab=xlab.ins, ylab=ylab, main=main)
         if (nchar(ref.seq) > 0) {
             if (guide.start > 0 && guide.length > 0) {
-                rect(starts[1] + guide.start - xlim[1], par('usr')[3]*0.975, starts[1] + guide.start - xlim[1] + guide.length, 0, col='grey', border=F)
+                rect(starts[1] + guide.start - xlim[1] - 0.5, par('usr')[3]*0.975, starts[1] + guide.start - xlim[1] + guide.length - 0.5, 0, col='grey', border=F)
             }
             cex = 40/max(40, xlim[2]-xlim[1]+1)
-            text(starts+0.5, rep(0, xlim[2]-xlim[1]+1), strsplit(substr(ref.seq, xlim[1], xlim[2]-1), '')[[1]], adj=c(0.5,1.3), cex=cex)
+            text(xlim[1]:xlim[2], rep(0, xlim[2]-xlim[1]+1), strsplit(substr(ref.seq, xlim[1], xlim[2]), '')[[1]], adj=c(0.5,1.3), cex=cex)
         }
-        rect(h.ins\$mids+0.5, 0, h.ins\$mids+1.5, h.ins\$counts, col=col.ins)
+        rect(starts.ins - 0.5, 0, starts.ins+0.5, h.ins\$counts, col=col.ins, border=h.ins\$counts>0)
     } else if (force.plots) {
         plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
         text(0, 0, labels=c('No insertions'))
@@ -952,27 +954,28 @@ plot.location.images <- function(data.del, data.ins, ref.seq='') {
     # Plot the data
     plot(h.del\$counts, xlim=xlim, type='n', xlab=NA, ylab=ylab,
         main=NA, ylim=c(-ylim.max, ylim.max), yaxt='n');
+    usr = par('usr');
     if (nchar(ref.seq) > 0) {
         factor = 10/100*40/max(40, xlim[2]-xlim[1]+1)
-        usr = par('usr');
         par('usr' = c(usr[1], usr[2], usr[3]*(1+factor), usr[4]))
         if (guide.start > 0 && guide.length > 0) {
-            rect(starts[1] + guide.start - xlim[1], -par('usr')[4]*factor, starts[1] + guide.start - xlim[1] + guide.length, 0, col='grey', border=F)
+            rect(starts[1] + guide.start - xlim[1] - 0.5, -par('usr')[4]*factor, starts[1] + guide.start - xlim[1] + guide.length - 0.5, 0, col='grey', border=F)
         }
         ax.ticks = axTicks(2);
         axis(2, col=dark.col.del, col.axis=dark.col.del, at=subset(ax.ticks, ax.ticks>=0))
-        rect(starts, 0, starts+1, h.del\$counts, col=col.del)
+        rect(starts - 0.5, 0, starts+0.5, h.del\$counts, col=col.del, border=h.del\$counts>0)
         cex = 40/max(40, xlim[2]-xlim[1]+1)
-        text(starts+0.5, rep(0, xlim[2]-xlim[1]+1), strsplit(substr(ref.seq, xlim[1], xlim[2]-1), '')[[1]], adj=c(0.5,1.4), cex=cex)
-        par('usr' = c(usr[1], usr[2], usr[3], usr[4] *(1+factor)))
-        axis(2, col=dark.col.ins, col.axis=dark.col.ins, at=subset(ax.ticks, ax.ticks<=0))
-        rect(h.ins\$mids+0.5, 0, h.ins\$mids+1.5, -h.ins\$counts, col=col.ins)
+        text(xlim[1]:xlim[2], rep(0, xlim[2]-xlim[1]+1), strsplit(substr(ref.seq, xlim[1], xlim[2]), '')[[1]], adj=c(0.5,1.3), cex=cex)
+        par('usr' = c(usr[1], usr[2], usr[4], usr[3] *(1+factor)))
+        axis(2, col=dark.col.ins, col.axis=dark.col.ins, at=subset(ax.ticks, ax.ticks>=0))
+        rect(starts.ins - 0.5, 0, starts.ins+0.5, h.ins\$counts, col=col.ins, border=h.ins\$counts>0)
     } else {
         ax.ticks = axTicks(2);
         axis(2, col=dark.col.del, col.axis=dark.col.del, at=subset(ax.ticks, ax.ticks>=0))
-        rect(h.del\$mids-1, 0, h.del\$mids, h.del\$counts, col=col.del)
-        axis(2, col=dark.col.ins, col.axis=dark.col.ins, at=subset(ax.ticks, ax.ticks<=0))
-        rect(h.ins\$breaks, 0, h.ins\$breaks+1, c(-h.ins\$counts,0), col=col.ins)
+        rect(starts - 0.5, 0, starts+0.5, h.del\$counts, col=col.del, border=h.del\$counts>0)
+        par('usr' = c(usr[1], usr[2], usr[4], usr[3]))
+        axis(2, col=dark.col.ins, col.axis=dark.col.ins, at=subset(ax.ticks, ax.ticks>=0))
+        rect(starts.ins - 0.5, 0, starts.ins+0.5, h.ins\$counts, col=col.ins, border=h.ins\$counts>0)
     }
     # Add the top axis
     axis(3)
