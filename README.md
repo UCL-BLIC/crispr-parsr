@@ -88,15 +88,27 @@ Example (without labels):
 
 **TrimGalore!**: http://www.bioinformatics.babraham.ac.uk/projects/trim_galore/
 
+Successfully tested with v0.3.3 and v0.4.0
+
 **FastQC**: http://www.bioinformatics.babraham.ac.uk/projects/fastqc/
+
+Successfully tested with v0.10.1, v0.11.2 and v.0.11.3
 
 **cutadapt**: https://code.google.com/p/cutadapt/
 
+Successfully tested with v1.8.1
+
 **samtools**: http://www.htslib.org
+
+Successfully tested with v1.2
 
 **Bowtie2**: http://bowtie-bio.sourceforge.net/bowtie2/index.shtml
 
+Successfully tested with v2.2.3
+
 **R**: http://www.r-project.org
+
+Successfully tested with v3.1.1
 
 Make sure that these softwares are available on the current path when running this tool.
 Alternatively, you can hard-code the path at the top of the crispr-parsr.pl script. However

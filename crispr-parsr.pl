@@ -141,7 +141,7 @@ Successfully tested with v0.3.3 and v0.4.0
 
 =item B<FastQC>: http://www.bioinformatics.babraham.ac.uk/projects/fastqc/
 
-Successfully tested with v0.11.2 and v.0.11.3
+Successfully tested with v0.10.1, v0.11.2 and v.0.11.3
 
 =item B<cutadapt>: https://code.google.com/p/cutadapt/
 
@@ -511,9 +511,18 @@ sub run_trim_galore {
             die "ERROR: Cannot find validated file $validated_file2\n";
         }
 
+        my $fastqc_version = qx"fastqc --version";
+
         my ($fastqc_zip_file1, $fastqc_zip_file2) = @$this_pair_of_merged_files;
-        $fastqc_zip_file1 =~ s/.(fq|fastq|fa.gz|fastq.gz)$/_val_1_fastqc.zip/;
-        $fastqc_zip_file2 =~ s/.(fq|fastq|fa.gz|fastq.gz)$/_val_2_fastqc.zip/;
+        if ($fastqc_version =~ /FastQC v0\.10\./) {
+            $fastqc_zip_file1 = $validated_file1."_fastqc.zip";
+            $fastqc_zip_file2 = $validated_file2."_fastqc.zip";
+        } elsif ($fastqc_version =~ /FastQC v0\.11\./) {
+            $fastqc_zip_file1 =~ s/.(fq|fastq|fa.gz|fastq.gz)$/_val_1_fastqc.zip/;
+            $fastqc_zip_file2 =~ s/.(fq|fastq|fa.gz|fastq.gz)$/_val_2_fastqc.zip/;
+        } else {
+            die "Unsupported version: $fastqc_version";
+        }
         
         if (check_fastqc_zip_file($fastqc_zip_file1) and check_fastqc_zip_file($fastqc_zip_file2)) {
             $validated_files->{$label} = [$validated_file1, $validated_file2];
