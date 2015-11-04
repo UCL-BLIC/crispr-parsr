@@ -429,8 +429,9 @@ sub merge_fastq_files {
 
     for (my $i = 0; $i < @lines - 1; $i += 2) {
         my $label;
-        if ($lines[$i] =~ /^(\w+)\:$/ and $i < @lines - 2) {
+        if ($lines[$i] =~ /^(.+)\:$/ and $i < @lines - 2) {
             $label = $1;
+            $label =~ s/\W/_/g;
             $i++;
         } else {
             $label = "sample.$merge_counter";
