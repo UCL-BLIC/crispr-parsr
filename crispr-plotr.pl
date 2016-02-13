@@ -4,6 +4,7 @@ use strict;
 
 use Pod::Usage;
 use Getopt::Long;
+use File::Basename;
 
 =pod
 
@@ -1442,6 +1443,81 @@ plot.topseqs <- function(data) {
 
 
 # =============================================================================
+#  FUNCTION plot.fastqc
+# =============================================================================
+#  This method plots a preview of the FastQC analysis
+# =============================================================================
+plot.fastqc <- function(fastqc.dir, title='FastQC') {
+    library(png);
+    mar = par('mar')
+    par('mar' = c(0.2, 0.2, mar[3], 0.2))
+
+    plot(NA, xlim = c(0, 1), ylim = c(0, 1), xlab = NA, ylab = NA, axes = F, main = title);
+
+    summary <- read.table(paste0(fastqc.dir, '/summary.txt'), sep = '\t')
+    tick <- readPNG(paste0(fastqc.dir, '/Icons/tick.png'))
+    warning <- readPNG(paste0(fastqc.dir, '/Icons/warning.png'))
+    error <- readPNG(paste0(fastqc.dir, '/Icons/error.png'))
+
+    plot.flag <- function(test, x, y) {
+        if (summary[summary\$V2 == test, 1] == 'PASS') {
+            rasterImage(tick, x, y + 0.01, x + 0.04, y + 0.05)
+        } else if (summary[summary\$V2 == test, 1] == 'WARN') {
+            rasterImage(warning, x, y + 0.01, x + 0.04, y + 0.05)
+        } else if (summary[summary\$V2 == test, 1] == 'FAIL') {
+            rasterImage(error, x, y + 0.01, x + 0.04, y + 0.05)
+        }
+        text(x + 0.03, y + 0.025, test, pos = 4, cex = 0.75)
+    }
+
+    test <- 'Basic Statistics';
+    plot.flag(test, 0, 0.95)
+    data <- readLines(paste0(fastqc.dir, '/fastqc_data.txt'))
+    line = 0
+    lines(c(0, 0.3), c(0.915, 0.915))
+    for (i in (which(data == '#Measure\tValue')[1] + 1):(which(data == '>>END_MODULE')[1] - 1)) {
+        labels <- strsplit(data[i], '\t')[[1]]
+        text(0, 0.9 - line, labels[1], pos = 4, cex = 0.35)
+        text(0.16, 0.9 - line, labels[2], pos = 4, cex = 0.35)
+        line <- line + 0.03
+        lines(c(0, 0.3), c(0.915 - line, 0.915 - line))
+    }
+    lines(c(0, 0), c(0.915, 0.915 - line))
+    lines(c(0.16, 0.16), c(0.915, 0.915 - line))
+    lines(c(0.3, 0.3), c(0.915, 0.915 - line))
+
+    test <- 'Per base sequence quality';
+    plot.flag(test, 0.35, 0.95)
+    png <- readPNG(paste0(fastqc.dir, '/Images/per_base_quality.png'))
+    rasterImage(png, 0.35, 0.6, 0.65, 0.95)
+
+    test <- 'Per tile sequence quality';
+    plot.flag(test, 0.7, 0.95)
+    png <- readPNG(paste0(fastqc.dir, '/Images/per_tile_quality.png'))
+    rasterImage(png, 0.7, 0.6, 1, 0.95)
+
+    test <- 'Per sequence quality scores';
+    plot.flag(test, 0, 0.5)
+    png <- readPNG(paste0(fastqc.dir, '/Images/per_sequence_quality.png'))
+    rasterImage(png, 0,    0.15,  0.3, 0.5)
+
+    test <- 'Per base N content';
+    plot.flag(test, 0.35, 0.5)
+    png <- readPNG(paste0(fastqc.dir, '/Images/per_base_n_content.png'))
+    rasterImage(png, 0.35, 0.15, 0.65, 0.5)
+
+    test <- 'Adapter Content';
+    plot.flag(test, 0.7, 0.5)
+    png <- readPNG(paste0(fastqc.dir, '/Images/adapter_content.png'))
+    rasterImage(png, 0.7,  0.15,    1, 0.5)
+
+    text(0.5, 0.05, paste0('See ', fastqc.dir, '.html for more details'), cex=0.6)
+
+    par('mar' = mar)
+}
+
+
+# =============================================================================
 #  FUNCTION plot.figures
 # =============================================================================
 #  This method calls all the previous methods to draw all the figures in order.
@@ -1449,7 +1525,30 @@ plot.topseqs <- function(data) {
 #  as well as a set of PNG and SVG files (see below)
 # =============================================================================
 plot.figures <- function() {
+";
 
+    my ($name, $path, $suffix) = fileparse($data_file);
+    my $fastqc_R1_file = $data_file;
+    $fastqc_R1_file =~ s/bam.data.txt/R1_val_1_fastqc/;
+    if (-e "$fastqc_R1_file.zip") {
+        system("unzip -q -u $fastqc_R1_file.zip -d $path");
+        print R "
+
+    plot.fastqc('$fastqc_R1_file', 'FastQC - R1');
+";
+    }
+
+    my $fastqc_R2_file = $data_file;
+    $fastqc_R2_file =~ s/bam.data.txt/R2_val_2_fastqc/;
+    if (-e "$fastqc_R2_file.zip") {
+        system("unzip -q -u $fastqc_R2_file.zip -d $path");
+        print R "
+
+    plot.fastqc('$fastqc_R2_file', 'FastQC - R2');
+";
+    }
+
+print R "
     plot.pie.chart()
 ";
 
@@ -2237,3 +2336,4 @@ sub test_merge_reads {
     is_deeply(merge_reads($read1, $read2), $merged_read, "merge_reads deletion before overlap");
 
 }
+
