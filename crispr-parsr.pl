@@ -567,9 +567,7 @@ sub check_fastqc_zip_file {
                 ($test eq "Per sequence quality scores") or
                 ($test eq "Per base N content") or
                 ($test eq "Adapter Content")) and $flag ne "PASS") {
-                    print STDERR "FastQC failure: $file has a <$flag> for test <$test>\n";
-                    print STDERR " -- The processing for this sample will stop here.\n";
-                    return 0;
+                    print STDERR "WARNING -- FastQC failure: $file has a <$flag> for test <$test>\n";
             }
         }
     }
