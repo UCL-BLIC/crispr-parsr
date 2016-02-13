@@ -187,6 +187,7 @@ my $samtools = "samtools";
 my $bowtie2_build_exe = "bowtie2-build";
 my $bowtie2_exe = "bowtie2";
 my $plotr = dirname(__FILE__)."/crispr-plotr.pl";
+my $allow_any = 0;
 
 GetOptions(
     "help" => \$help,
@@ -195,7 +196,8 @@ GetOptions(
     "wt-seq|ref-seq|wt_file=s" => \$wt_seq_file,
     "guide_seq|guide-seq=s" => \$guide_seq_file,
     "samples|merge_file=s" => \$merge_file,
-    "output=s" => \$output_dir,    
+    "output=s" => \$output_dir,
+    "allow_any|allow-any!" => \$allow_any,
 );
 
 if ($help) {
@@ -648,6 +650,7 @@ sub run_plotr {
         my $command = [$plotr, "--input", $this_bam_file, "--out", $this_pdf_file, "--ref_seq", $this_wt_seq_file,
                         "--label", $label];
         push(@$command, "--guide-seq", $this_guide_seq_file) if ($this_guide_seq_file);
+        push(@$command, "--allow-any") if ($allow_any);
         push(@$command, ">", $this_txt_file);
         my ($ok, $err, $full_buff, $stdout_buff, $stderr_buff) = run(command => $command);
         if (!$ok) {
