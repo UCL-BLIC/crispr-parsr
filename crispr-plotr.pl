@@ -183,6 +183,7 @@ my $plot_png = 0;
 my $plot_svg = 0;
 my $plot_all = 0;
 my $force_plots = 0;
+my $test = 0;
 
 my $STAT_NO_ALIGNMENT = "No alignment";
 my $STAT_SHORT_READ = "Short read";
@@ -196,6 +197,7 @@ my $STAT_OTHER_MISMATCHES = "Other mismatches";
 my $STAT_OK_WILD_TYPE = "WT";
 my $STAT_OK_DELETION = "DEL";
 my $STAT_OK_INSERTION = "INS";
+my $STAT_OK_COMPLEX = "COM";
 
 
 my @STAT_ORDER = (
@@ -211,10 +213,12 @@ my @STAT_ORDER = (
     $STAT_OK_WILD_TYPE,
     $STAT_OK_DELETION,
     $STAT_OK_INSERTION,
+    $STAT_OK_COMPLEX,
 );
 
 my $COLOR_DELETION = "cyan3";
 my $COLOR_INSERTION = "darkorchid3";
+my $COLOR_COMPLEX = "#4d80cd";
 my $STAT_COLOR = {
     "$STAT_NO_ALIGNMENT" => "lightgrey",
     "$STAT_SHORT_READ" => "grey",
@@ -228,12 +232,14 @@ my $STAT_COLOR = {
     "$STAT_OK_WILD_TYPE" => "white",
     "$STAT_OK_DELETION" => $COLOR_DELETION,
     "$STAT_OK_INSERTION" => $COLOR_INSERTION,
+    "$STAT_OK_COMPLEX" => $COLOR_COMPLEX,
 };
 
 
 GetOptions(
     "help"  => \$help,
     "debug"  => \$debug,
+    "test"  => \$test,
     "label=s" => \$label,
     "input_file|input-file=s" => \$input_bam_file,
     "output_file|output-file=s" => \$output_pdf_file,
@@ -252,6 +258,13 @@ GetOptions(
     "plot_all|plot-all!" => \$plot_all,
     "force_plots|force-plots!" => \$force_plots,
     );
+
+if ($test) {
+    use Test::More;
+    test_merge_reads();
+    done_testing();
+    exit(0);
+}
 
 if ($help) {
     pod2usage(-verbose=>2);
@@ -321,11 +334,11 @@ sub read_fasta_seq {
     my ($fasta_file) = @_;
     my $seq;
 
-    open(FASTA, $fasta_file) or die;
+    open(FASTA, $fasta_file) or die "Cannot open FASTA file <$fasta_file>\n";
     while (<FASTA>) {
         chomp;
         next if (/^>/);
-        $seq .= $_;
+        $seq .= uc($_);
     }
 
     return $seq;
@@ -381,6 +394,7 @@ sub get_top_sequences {
     ## ------------------------------------------------------------------------------
     my @del_lines = qx"more $data_file | awk '\$2 == \"DEL\" { print \$3, \$4, \$7}' | sort | uniq -c | sort -rn";
     my @ins_lines = qx"more $data_file | awk '\$2 == \"INS\" { print \$3, \$4, \$7}' | sort | uniq -c | sort -rn";
+    my @com_lines = qx"more $data_file | awk '\$2 == \"COM\" { print \$3, \$4, \$7}' | sort | uniq -c | sort -rn";
 
 
     ## ------------------------------------------------------------------------------
@@ -389,7 +403,7 @@ sub get_top_sequences {
     my $min_from;
     my $max_to;
     my $longest_seq = 0;
-    foreach my $this_line (@del_lines) {
+    foreach my $this_line (@del_lines, @com_lines) {
         my ($num, $del_length, $from, $seq) = $this_line =~ /(\d+)\s(\-?\d+)\s(\d+)\s(\w+)/;
         $min_from = $from if (!$min_from or $from < $min_from);
         $max_to = $from+$del_length if (!$max_to or $from+$del_length > $max_to);
@@ -438,7 +452,7 @@ sub get_top_sequences {
     open(DEL, ">$deletions_file") or die;
     print DEL join("\n", $header, $wt_sequence, "", @del_sequences, "");
     close(DEL);
-    push(@$top_sequences, splice(@del_sequences, 0, 20));
+    push(@$top_sequences, splice(@del_sequences, 0, 18));
 
 
     ## ------------------------------------------------------------------------------
@@ -462,7 +476,25 @@ sub get_top_sequences {
     open(INS, ">$insertions_file") or die;
     print INS join("\n", $header, $wt_sequence, "", @ins_sequences, "");
     close(INS);
-    push(@$top_sequences, splice(@ins_sequences, 0, 20));
+    push(@$top_sequences, splice(@ins_sequences, 0, 18));
+
+    ## ------------------------------------------------------------------------------
+    ## Separation line
+    ## ------------------------------------------------------------------------------
+    push(@$top_sequences, "");
+
+
+    ## ------------------------------------------------------------------------------
+    ## Most common complex cases
+    ## ------------------------------------------------------------------------------
+    my @com_sequences;
+    foreach my $this_line (@com_lines) {
+        my ($num, $com_length, $from, $seq) = $this_line =~ /(\d+)\s(\-?\d+)\s(\d+)\s(\w+)/;
+        my $aligned_seq = substr($ref_seq, $min_from, $max_to-$min_from);
+        substr($aligned_seq, $from-$min_from-1, $com_length+2, ">".("-"x($com_length))."<");
+        push(@com_sequences, sprintf($format, $aligned_seq, $num, "COM", $com_length, $from, ">$seq<"));
+    }
+    push(@$top_sequences, splice(@com_sequences, 0, 18));
 
     # Print this on the standard output
     print "\n", join("\n", @$top_sequences), "\n";
@@ -516,7 +548,20 @@ sub parse_bam_file {
           print join("\t", $qname1, $flag1, $rname1, $pos1, $mapq1, $cigar1, $rnext1, $pnext1, $tlen1), "\n";
           print join("\t", $qname2, $flag2, $rname2, $pos2, $mapq2, $cigar2, $rnext2, $pnext2, $tlen2), "\n";
         }
+        
+        my $read1 = {
+            'seq' => $seq1,
+            'qual' => $qual1,
+            'start' => $pos1,
+            'cigar' => $cigar1,
+            'md' => $md1};
 
+        my $read2 = {
+            'seq' => $seq2,
+            'qual' => $qual2,
+            'start' => $pos2,
+            'cigar' => $cigar2,
+            'md' => $md2};
 
         ## ------------------------------------------------------------------------------
         ## Check that both lines refer to the same read
@@ -535,7 +580,6 @@ sub parse_bam_file {
             next;
         }
 
-
         ## ------------------------------------------------------------------------------
         ## Check that both reads are long enough
         ## ------------------------------------------------------------------------------
@@ -544,155 +588,85 @@ sub parse_bam_file {
             next;
         }
 
+        ## ------------------------------------------------------------------------------
+        ## Merge the reads and check for exceptions
+        ## ------------------------------------------------------------------------------
+        my $merged_read = merge_reads($read1, $read2);
 
-        ## ------------------------------------------------------------------------------
-        ## Check that both reads overlap and that the overlap is long enough
-        ## ------------------------------------------------------------------------------
-        my $overlap_start = $pos1>$pos2?$pos1:$pos2;
-        my $overlap_end = $end1<$end2?$end1:$end2;
-        if ($overlap_end < $overlap_start + $min_overlap) {
-            $stats->{$STAT_NO_OVERLAP}++;
-            next;
-        }
-#        print "Overlap: $overlap_start-$overlap_end\n";
-
-
-        ## ------------------------------------------------------------------------------
-        ## Keeps a safe copy of both original sequences
-        ## ------------------------------------------------------------------------------
-        my $original_seq1 = $seq1;
-        my $original_seq2 = $seq2;
-
-
-        ## ------------------------------------------------------------------------------
-        ## Clip the sequence 5' of the overlap (and check that there is no mismatch nor indel)
-        ## ------------------------------------------------------------------------------
-        if ($pos1 > $pos2) {
-            # Clip R2
-            my $diff_in_ref_bp = $pos1 - $pos2;
-            my ($initial_match) = $cigar2 =~ /^(\d*)M/;
-#             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
-            if (!$allow_indels and $initial_match < $diff_in_ref_bp) {
-                # Indels in the 5' non-overlapping sequence: ignore the pair!
-                $stats->{$STAT_INDEL_5_PRIME}++;
-                next;
-            }
-            ($initial_match) = $md2 =~ /^MD:Z:(\d*)/;
-#             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
-            if (!$allow_muts and (!defined($initial_match) or $initial_match < $diff_in_ref_bp)) {
-                # Indels in the 5' non-overlapping sequence: ignore the pair!
-                $stats->{$STAT_MUTATION_5_PRIME}++;
-                next;
-            }
-            substr($seq2, 0, $diff_in_ref_bp, "");
-            print "1A $seq1\n1A $seq2\n" if ($debug);
-        } elsif ($pos1 < $pos2) {
-            # Clip R1
-            my $diff_in_ref_bp = $pos2 - $pos1;
-            my ($initial_match) = $cigar1 =~ /^(\d*)M/;
-#             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
-            if (!$allow_indels and (!defined($initial_match) or $initial_match < $diff_in_ref_bp)) {
-                # Indels in the 5' non-overlapping sequence: ignore the pair!
-                $stats->{$STAT_INDEL_5_PRIME}++;
-                next;
-            }
-            ($initial_match) = $md1 =~ /^MD:Z:(\d*)/;
-#             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $initial_match), "\n";
-            if (!$allow_muts and $initial_match < $diff_in_ref_bp) {
-                # Indels in the 5' non-overlapping sequence: ignore the pair!
-                $stats->{$STAT_MUTATION_5_PRIME}++;
-                next;
-            }
-            substr($seq1, 0, $diff_in_ref_bp, "");
-            print "1B $seq1\n1B $seq2\n" if ($debug);
-        }
-
-
-        ## ------------------------------------------------------------------------------
-        ## Clip the sequence 3' of the overlap (and check that there is no mismatch nor indel)
-        ## ------------------------------------------------------------------------------
-        if ($end1 > $end2) {
-            # Clip R1
-            my $diff_in_ref_bp = $end1 - $end2;
-            my ($last_match) = $cigar1 =~ /(\d*)M$/;
-#             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
-            if (!$allow_indels and ($last_match < $diff_in_ref_bp)) {
-                # Indels in the 3' non-overlapping sequence: ignore the pair!
-                $stats->{$STAT_INDEL_3_PRIME}++;
-                next;
-            }
-            ($last_match) = $md1 =~ /(\d*)$/;
-#             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
-            if (!$allow_muts and ($last_match < $diff_in_ref_bp)) {
-                # Indels in the 3' non-overlapping sequence: ignore the pair!
-                $stats->{$STAT_MUTATION_3_PRIME}++;
-                next;
-            }
-            substr($seq1, -$diff_in_ref_bp, $diff_in_ref_bp, "");
-            print "2A $seq1\n2A $seq2\n" if ($debug);
-        } elsif ($end1 < $end2) {
-            # Clip R2
-            my $diff_in_ref_bp = $end2 - $end1;
-            my ($last_match) = $cigar2 =~ /(\d*)M$/;
-#             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
-            if (!$allow_indels and (!defined($last_match) or ($last_match < $diff_in_ref_bp))) {
-                # Indels in the 3' non-overlapping sequence: ignore the pair!
-                $stats->{$STAT_INDEL_3_PRIME}++;
-                next;
-            }
-            ($last_match) = $md2 =~ /(\d*)$/;
-#             print join("\t", $pos1, $pos2, $diff_in_ref_bp, $last_match), "\n";
-            if (!$allow_muts and (!defined($last_match) or $last_match < $diff_in_ref_bp)) {
-                # Indels in the 3' non-overlapping sequence: ignore the pair!
-                $stats->{$STAT_MUTATION_3_PRIME}++;
-                next;
-            }
-            substr($seq2, -$diff_in_ref_bp, $diff_in_ref_bp, "");
-            print "2B $seq1\n2B $seq2\n" if ($debug);
-        }
-
-
-        ## ------------------------------------------------------------------------------
-        ## Check that both sequences are identical on the overlap
-        ## ------------------------------------------------------------------------------
-        if ($seq1 ne $seq2) {
-            $stats->{$STAT_READ_MISMATCH}++;
-            print "MM $seq1\nMM $seq2\n" if ($debug);
+        if (exists($merged_read->{'error'})) {
+            $stats->{$merged_read->{'error'}}++;
             next;
         }
 
 
-        ## ------------------------------------------------------------------------------
-        ## Classify the PE reads into DEL, INS, WT or other-mismatches. Stores the DEL and INS in
-        ## the $data_file
-        ## ------------------------------------------------------------------------------
-        if ($md1 =~ /^MD:Z:\d+\^[A-Z]+\d+$/ and $md2 =~ /^MD:Z:\d+\^[A-Z]+\d+$/ and $cigar1 =~ /^\d+M\d*D\d+M$/ and $cigar2 =~ /^\d+M\d*D\d+M$/) {
+        if (!$allow_indels and $merged_read->{'5prime'}{'cigar'} !~ /^\d+M$/) {
+            $stats->{$STAT_INDEL_5_PRIME}++;
+            next;
+        }
+
+        if (!$allow_muts and $merged_read->{'5prime'}{'md'} !~ /^MD:Z:\d+$/) {
+            $stats->{$STAT_MUTATION_5_PRIME}++;
+            next;
+        }
+
+        if (!$allow_indels and $merged_read->{'3prime'}{'cigar'} !~ /^\d+M$/) {
+            $stats->{$STAT_INDEL_3_PRIME}++;
+            next;
+        }
+
+        if (!$allow_muts and $merged_read->{'3prime'}{'md'} !~ /^MD:Z:\d+$/) {
+            $stats->{$STAT_MUTATION_3_PRIME}++;
+            next;
+        }
+
+        my $cigar_overlap = $merged_read->{'overlap'}{'cigar'};
+        my $md_overlap = $merged_read->{'overlap'}{'md'};
+        if ($md_overlap =~ /^MD:Z:\d+\^[A-Z]+\d+$/ and $cigar_overlap =~ /^(\d+M)?\d+D(\d+M)?$/) {
             $stats->{$STAT_OK_DELETION}++;
-            my ($deletion_length) = $cigar1 =~ /(\d+)D/;
-#             my ($insertion_length2) = $cigar2 =~ /(\d+)D/;
-#             my ($insertion_length3) = length(($md1 =~ /^MD:Z:\d+\^([A-Z]+)\d+$/)[0]);
-#             my ($insertion_length4) = length(($md2 =~ /^MD:Z:\d+\^([A-Z]+)\d+$/)[0]);
-#             print join("--", $insertion_length, $insertion_length2, $insertion_length3, $insertion_length4, $cigar1, $cigar2, $md1, $md2), "\n";
-#             die if ($insertion_length != $insertion_length2);
-#             die if ($insertion_length != $insertion_length3);
-#             die if ($insertion_length != $insertion_length4);
-            my $read_position = ($cigar1 =~ /^(\d+)M/)[0];
-            my ($deletion_seq) = $md1 =~ /^MD:Z:\d+\^([A-Z]+)\d+$/;
-            print DATA join("\t", $qname1, "DEL", $deletion_length, $read_position + $pos1, $read_position + $pos1 + $deletion_length - 1, $read_position + $pos1  + ($deletion_length - 1)/2, $deletion_seq), "\n";
-        } elsif ($md1 =~ /^MD:Z:\d+$/ and $md2 =~ /^MD:Z:\d+$/ and $cigar1 =~ /^\d+M\d*I\d+M$/ and $cigar2 =~ /^\d+M\d*I\d+M$/) { 
+            my ($deletion_start) = ($cigar_overlap =~ /^(\d+)M/);
+            my ($deletion_length) = $cigar_overlap =~ /(\d+)D/;
+            my ($deletion_seq) = $md_overlap =~ /^MD:Z:\d+\^([A-Z]+)\d+$/;
+            my $from = $merged_read->{'overlap'}{'start'} + ($deletion_start or 0);
+            my $to = $from + $deletion_length - 1;
+            my $midpoint = $from + ($deletion_length - 1)/2;
+            print DATA join("\t", $qname1, "DEL", $deletion_length, $from, $to, $midpoint, $deletion_seq), "\n";
+        } elsif ($md_overlap =~ /^MD:Z:\d+$/ and $cigar_overlap =~ /^\d+M\d*I\d+M$/) {
             $stats->{$STAT_OK_INSERTION}++;
-            my ($insertion_length) = $cigar1 =~ /(\d+)I/;
-            my $read_position = ($cigar1 =~ /^(\d+)M/)[0];
-            my $insertion_seq = substr($original_seq1, $read_position, $insertion_length);
-            print DATA join("\t", $qname1, "INS", $insertion_length, $read_position + $pos1, $read_position + $pos1 - 1, $read_position + $pos1 - 1/2, $insertion_seq), "\n";
-        } elsif ($md1 =~ /^MD:Z:\d+$/ and $md2 =~ /^MD:Z:\d+$/ and $cigar1 =~ /^\d+M$/ and $cigar2 =~ /^\d+M$/) {
+            my ($insertion_start) = $cigar_overlap =~ /^(\d+)M/;
+            my ($insertion_length) = $cigar_overlap =~ /(\d+)I/;
+            my $from = $merged_read->{'overlap'}{'start'} + ($insertion_start or 0);
+            my $to = $from - 1;
+            my $midpoint = $from - 1/2;
+            my $insertion_seq = substr($merged_read->{'overlap'}{'seq'}, ($insertion_start or 0), $insertion_length);
+            print DATA join("\t", $qname1, "INS", $insertion_length, $from, $to, $midpoint, $insertion_seq), "\n";
+        } elsif ($md_overlap =~ /^MD:Z:\d+$/ and $cigar_overlap =~ /^\d+M$/) {
             $stats->{$STAT_OK_WILD_TYPE}++;
-            next;
-        } else {
-            $stats->{$STAT_OTHER_MISMATCHES}++;
-            next;
-        }
+        } elsif ($cigar_overlap !~ /^\d+M$/) {
+            $stats->{$STAT_OK_COMPLEX}++;
+            my ($event_5prime_md) = ($md_overlap =~ /^MD:Z:(\d+)/);
+            $event_5prime_md ||= 0;
+            my ($event_5prime_cigar) = ($cigar_overlap =~ /^(\d+)M/);
+            $event_5prime_cigar ||= 0;
+            # $event_5prime_length is the length of the sequence in the overlap that is identical to the WT seq
+            my $event_5prime_length = $event_5prime_md>$event_5prime_cigar?$event_5prime_cigar:$event_5prime_md;
 
+            my ($event_3prime_md) = ($md_overlap =~ /(\d+)$/);
+            $event_3prime_md ||= 0;
+            my ($event_3prime_cigar) = ($cigar_overlap =~ /(\d+)M$/);
+            $event_3prime_cigar ||= 0;
+            # $event_3prime_length is the length of the sequence in the overlap that is identical to the WT seq
+            my $event_3prime_length = $event_3prime_md>$event_3prime_cigar?$event_3prime_cigar:$event_3prime_md;
+
+            my $from = $merged_read->{'overlap'}{'start'} + $event_5prime_length;
+            my $to = $merged_read->{'overlap'}{'end'} - $event_3prime_length;
+            my $midpoint = ($from + $to)/2;
+            my $complex_seq = $merged_read->{'overlap'}{'seq'};
+            substr($complex_seq, 0, $event_5prime_length, "");
+            substr($complex_seq, -$event_3prime_length, $event_3prime_length, "");
+            print DATA join("\t", $qname1, "COM", ($to - $from + 1), $from, $to, $midpoint, $complex_seq), "\n";
+#             print "$cigar_overlap $md_overlap  $event_5prime_length-$event_3prime_length $complex_seq\n";
+#             <STDIN>;
+        }
     }
     close(SAM);
     close(DATA);
@@ -700,12 +674,334 @@ sub parse_bam_file {
     return ($data_file, $stats);
 }
 
-
 sub revcom {
     my ($seq) = @_;
     $seq = reverse($seq);
     $seq =~ tr/ACTG/TGAC/;
     return $seq;
+}
+
+sub get_cigar_expanded_string {
+    my ($cigar_compact_string) = @_;
+    my $cigar_expanded_string = "";
+
+    my @cigars = ($cigar_compact_string =~ /(\d*)(\w)/g);
+    for (my $i=0; $i < @cigars; $i+=2) {
+        $cigar_expanded_string .= $cigars[$i+1] x $cigars[$i];
+    }
+
+    return $cigar_expanded_string;
+}
+
+sub get_cigar_compact_string {
+    my ($cigar_expanded_string) = @_;
+    my $cigar_compact_string = "";
+
+    while ($cigar_expanded_string =~ /^((.)\g2*)/) {
+        $cigar_compact_string .= length($1).substr($1,0,1);
+        $cigar_expanded_string =~ s/^$1//;
+    }
+
+    return $cigar_compact_string;
+}
+
+sub get_md_expanded_string {
+    my ($md_compact_string) = @_;
+    my $md_expanded_string = "";
+
+    $md_compact_string =~ s/^MD:Z://;
+    my @mds = grep {$_} split(/(\d+)/, $md_compact_string);
+    foreach my $md_bit (@mds) {
+        if ($md_bit =~ /^\d+$/) {
+            # Matches: write dots
+            $md_expanded_string .= "." x $md_bit;
+        } elsif ($md_bit =~ /^[A-Z]+$/) {
+            # Mismatches: write lowercase
+            $md_expanded_string .= lc($md_bit);
+        } elsif ($md_bit =~ /^\^[A-Z]+$/) {
+            # Deletions: write uppercase
+            $md_expanded_string .= substr($md_bit, 1);
+        } else {
+            die "Cannot understand MD:Z flag.\n";
+        }
+    }
+    $md_expanded_string =~ s/n/./g;
+
+    return $md_expanded_string;
+}
+
+sub get_md_compact_string {
+    my ($md_expanded_string) = @_;
+    my $md_compact_string = "MD:Z:";
+
+    my $last_md_bit_mode = "";
+    while ($md_expanded_string =~ /^(\^?(.)\g2*)/) {
+        my $md_bit = $1;
+        if ($md_bit =~ /^\.+$/) {
+            $md_compact_string .= length($md_bit);
+            $last_md_bit_mode = "match";
+        } elsif ($md_bit =~ /^[a-z]+$/) {
+            if ($last_md_bit_mode eq "deletion") {
+                $md_compact_string .= "0";
+            }
+            $md_compact_string .= join("0", split("", uc($md_bit)));
+            $last_md_bit_mode = "mismatch";
+        } elsif ($md_bit =~ /^[A-Z]+$/) {
+            $md_compact_string .= ($last_md_bit_mode ne "deletion"?"^":"").$md_bit;
+            $last_md_bit_mode = "deletion";
+        } else {
+            die "Cannot understand MD:Z flag: $md_expanded_string.\n";
+        }
+        $md_expanded_string =~ s/^$md_bit//;
+    }
+
+    return $md_compact_string;
+}
+
+sub merge_reads {
+    my ($read1, $read2) = @_;
+
+    ## ------------------------------------------------------------------------
+    ## Extract values from structure
+    ## ------------------------------------------------------------------------
+    my $start1 = $read1->{start};
+    my $cigar1 = $read1->{cigar};
+    my $md1 = $read1->{md};
+    my $seq1 = $read1->{seq};
+    my $qual1 = $read1->{qual};
+
+    my $start2 = $read2->{start};
+    my $cigar2 = $read2->{cigar};
+    my $md2 = $read2->{md};
+    my $seq2 = $read2->{seq};
+    my $qual2 = $read2->{qual};
+
+
+    ## ------------------------------------------------------------------------
+    ## Swap read1 and read2 if necessary
+    ## ------------------------------------------------------------------------
+    if ($start2 < $start1) {
+        ($start1, $start2) = ($start2, $start1);
+        ($cigar1, $cigar2) = ($cigar2, $cigar1);
+        ($md1, $md2) = ($md2, $md1);
+        ($seq1, $seq2) = ($seq2, $seq1);
+        ($qual1, $qual2) = ($qual2, $qual1);
+    }
+
+
+    ## ------------------------------------------------------------------------
+    ## Get expanded cigar and md strings
+    ## ------------------------------------------------------------------------
+    my $cigar_str1 = get_cigar_expanded_string($cigar1);
+    my $cigar_str2 = get_cigar_expanded_string($cigar2);
+
+    my $md_str1 = get_md_expanded_string($md1);
+    my $md_str2 = get_md_expanded_string($md2);
+
+
+    ## ------------------------------------------------------------------------
+    ## Get some coordinates for unique and overlapping sequence
+    ## ------------------------------------------------------------------------
+    my $end1 = $start1 + length($seq1) - ($cigar_str1 =~ tr/I/I/) + ($cigar_str1 =~ tr/D/D/) - 1;
+    my $end2 = $start2 + length($seq2) - ($cigar_str2 =~ tr/I/I/) + ($cigar_str2 =~ tr/D/D/) - 1;
+    my $ref_length_5prime_unique = $start2 - $start1;
+    my $ref_length_3prime_unique = $end2 - $end1;
+    my $ref_start_overlap = $start2;
+    my $ref_end_overlap = $end1;
+    my $ref_length_overlap = $end1 - $start2 + 1;
+
+    if ($debug) {
+        print "\n\n###########################################################################\n";
+        print join("\n", "$start1-$end1 in ref coordinates", $seq1, $qual1, $cigar_str1." ($cigar1)", $md_str1." ($md1)"), "\n";
+        print "###########################################################################\n";
+        print join("\n", "$start2-$end2 in ref coordinates", $seq2, $qual2, $cigar_str2." ($cigar2)", $md_str2." ($md2)"), "\n";
+        print "###########################################################################\n\n";
+    }
+
+    if ($end1 - $start2 + 1 < $min_overlap) {
+        # Reads don't overlap.
+        return {'error' => $STAT_NO_OVERLAP};
+    }
+
+    if ($end1 > $end2) {
+        # Read2 fully included in read1: skip this odd pair.
+        return {'error' => $STAT_NO_OVERLAP};
+    }
+
+
+    ## ------------------------------------------------------------------------
+    ## Get info for the 5' unique sequence
+    ## ------------------------------------------------------------------------
+    my ($cigar_5prime_unique) = ($cigar_str1 =~ /^((?:I*[MD]){$ref_length_5prime_unique}I*)/);
+    my $seq_length_5prime_unique = ($cigar_5prime_unique =~ tr/MI/MI/);
+
+    ## If overlap starts in an insertion:
+    my $length_insertion_end_5prime_unique = length(($cigar_5prime_unique =~ /(I*)$/)[0]);
+    my $length_insertion_start_read2 = length(($cigar_str2 =~ /^(I*)/)[0]);
+    if ($length_insertion_end_5prime_unique > 0 and $length_insertion_start_read2 > 0) {
+        if ($debug) {
+            print " -- Trimming end of 5' unique required: ${length_insertion_end_5prime_unique}I vs ${length_insertion_start_read2}I\n";
+        }
+        if ($length_insertion_end_5prime_unique >= $length_insertion_start_read2) {
+            # Insertion in 5' unique is the same or longer: just trim it  to remove the overlapping sequence
+            $cigar_5prime_unique =~ s/I{$length_insertion_start_read2}$//;
+            $seq_length_5prime_unique -= $length_insertion_start_read2;
+        } else {
+            return {'error' => $STAT_READ_MISMATCH};
+        }
+    }
+    my ($seq_5prime_unique) = substr($seq1, 0, $seq_length_5prime_unique);
+    my ($qual_5prime_unique) = substr($qual1, 0, $seq_length_5prime_unique);
+    my $md_length_5prime_unique = ($cigar_5prime_unique =~ tr/MD/MD/);
+    my ($md_5prime_unique) = substr($md_str1, 0, $md_length_5prime_unique);
+
+    if ($debug) {
+        print "5' sequence:\n$seq_5prime_unique\n$qual_5prime_unique\n$cigar_5prime_unique\n$md_5prime_unique\n\n";
+    }
+
+
+    ## ------------------------------------------------------------------------
+    ## Get info for the 3' unique sequence
+    ## ------------------------------------------------------------------------
+    my ($cigar_3prime_unique) = ($cigar_str2 =~ /(I*(?:I*[MD]){$ref_length_3prime_unique})$/);
+    my $seq_length_3prime_unique = ($cigar_3prime_unique =~ tr/MI/MI/);
+
+    ## If overlap ends in an insertion:
+    my $length_insertion_start_3prime_unique = length(($cigar_3prime_unique =~ /^(I*)/)[0]);
+    my $length_insertion_end_read1 = length(($cigar_str1 =~ /(I*)$/)[0]);
+    if ($length_insertion_start_3prime_unique > 0 and $length_insertion_end_read1 > 0) {
+        if ($debug) {
+            print " -- Trimming start of 3' unique required: ${length_insertion_start_3prime_unique}I vs ${length_insertion_end_read1}I\n";
+        }
+        if ($length_insertion_start_3prime_unique >= $length_insertion_end_read1) {
+            # Insertion in 3' unique is the same or longer: just trim it to remove the overlapping sequence
+            $cigar_3prime_unique =~ s/^I{$length_insertion_end_read1}//;
+            $seq_length_3prime_unique -= $length_insertion_end_read1;
+        } else {
+            return {'error' => $STAT_READ_MISMATCH};
+        }
+    }
+    my ($seq_3prime_unique) = substr($seq2, -$seq_length_3prime_unique);
+    my ($qual_3prime_unique) = substr($qual2, -$seq_length_3prime_unique);
+    my $md_length_3prime_unique = ($cigar_3prime_unique =~ tr/MD/MD/);
+    my ($md_3prime_unique) = substr($md_str2, -$md_length_3prime_unique);
+
+    if ($debug) {
+        print "3' sequence:\n$seq_3prime_unique\n$qual_3prime_unique\n$cigar_3prime_unique\n$md_3prime_unique\n\n";
+    }
+
+
+    ## ------------------------------------------------------------------------
+    ## Get info for the overlapping sequence
+    ## ------------------------------------------------------------------------
+    my $seq_length_overlapping_sequence1 = length($seq1) - $seq_length_5prime_unique;
+    my $seq_length_overlapping_sequence2 = length($seq2) - $seq_length_3prime_unique;
+    my $seq_overlap1 = substr($seq1, $seq_length_5prime_unique);
+    my $seq_overlap2 = substr($seq2, 0, -$seq_length_3prime_unique);
+    my $qual_overlap1 = substr($qual1, $seq_length_5prime_unique);
+    my $qual_overlap2 = substr($qual2, 0, -$seq_length_3prime_unique);
+    my $cigar_overlap1 = $cigar_str1;
+    $cigar_overlap1 =~ s/^$cigar_5prime_unique//;
+    my $cigar_overlap2 = $cigar_str2;
+    $cigar_overlap2 =~ s/$cigar_3prime_unique$//;
+    my $md_overlap1 = $md_str1;
+    $md_overlap1 =~ s/^$md_5prime_unique//;
+    my $md_overlap2 = $md_str2;
+    $md_overlap2 =~ s/$md_3prime_unique$//;
+    if ($debug) {
+        print "overlapping sequence:\n$seq_overlap1\n$seq_overlap2\n",
+                "$qual_overlap1\n$qual_overlap2\n",
+                "$cigar_overlap1\n$cigar_overlap2\n",
+                "$md_overlap1\n$md_overlap2\n",
+                ;
+    }
+
+
+#     if ($cigar_overlap1 ne $cigar_overlap2) {
+#         print "Cigar strings don't match\n";
+#     }
+#     if ($md_overlap1 ne $md_overlap2) {
+#         print "MD strings don't match\n";
+#     }
+#     if ($seq_length_overlapping_sequence1 != $seq_length_overlapping_sequence2) {
+#         print "Error parsing sequences. Overlapping sequence lengths do not match\n";
+#         <STDIN>;
+#         return {'error' => "Overlapping sequences do not match"};
+#     }
+    if ($debug and 
+        ($cigar_overlap1 ne $cigar_overlap2)
+        and
+        ($seq_overlap1 eq $seq_overlap2)
+        ) {
+        print "Cigar strings do not match even if sequences do";
+        <STDIN>;
+    }
+    if ($seq_overlap1 ne $seq_overlap2) {
+#         print "Sequences don't match\n";
+        return {'error' => $STAT_READ_MISMATCH};
+    }
+    my $md_pos = 0;
+
+
+    ## ------------------------------------------------------------------------
+    ## Get the merged information
+    ## ------------------------------------------------------------------------
+    my $merged_sequence = undef;
+    my $merged_cigar = undef;
+    my $merged_md = undef;
+    my $merged_qual = undef;
+    my $qual_overlap_max = undef;
+    if ($seq_overlap1 eq $seq_overlap2) {
+        $merged_cigar = get_cigar_compact_string($cigar_5prime_unique.$cigar_overlap1.$cigar_3prime_unique);
+        $merged_md = get_md_compact_string($md_5prime_unique.$md_overlap1.$md_3prime_unique);
+        $merged_sequence = $seq_5prime_unique.$seq_overlap1.$seq_3prime_unique;
+        $qual_overlap_max = "";
+        for (my $a = 0; $a < $seq_length_overlapping_sequence1; $a++) {
+            my $bp1 = substr($seq_overlap1, $a, 1);
+            my $bp2 = substr($seq_overlap2, $a, 1);
+            my $q1 = substr($qual_overlap1, $a, 1);
+            my $q2 = substr($qual_overlap2, $a, 1);
+            $qual_overlap_max .= ord($q1)>ord($q2)?$q1:$q2;
+    #         print STDERR join("\t", $bp1, $bp2, ord($q1)-33, ord($q2)-33), "\n";
+        }
+        $merged_qual = $qual_5prime_unique.$qual_overlap_max.$qual_3prime_unique;
+    }
+
+    return {
+            'merged' => {
+                'start' => $start1,
+                'end'   => $end2,
+                'seq'   => $merged_sequence,
+                'qual'  => $merged_qual,
+                'cigar' => $merged_cigar,
+                'md'    => $merged_md,
+            },
+            '5prime' => {
+                'start' => $start1,
+                'end'   => $ref_start_overlap - 1,
+                'seq'   => $seq_5prime_unique,
+                'qual'  => $qual_5prime_unique,
+                'cigar' => get_cigar_compact_string($cigar_5prime_unique),
+                'md'    => get_md_compact_string($md_5prime_unique),
+            },
+            'overlap' => {
+                'start' => $ref_start_overlap,
+                'end'   => $ref_end_overlap,
+                'seq'   => $seq_overlap1,
+                'qual'  => $qual_overlap_max,
+                'cigar' => get_cigar_compact_string($cigar_overlap1),
+                'md'    => get_md_compact_string($md_overlap1),
+            },
+            '3prime' => {
+                'start' => $ref_end_overlap + 1,
+                'end'   => $end2,
+                'seq'   => $seq_3prime_unique,
+                'qual'  => $qual_3prime_unique,
+                'cigar' => get_cigar_compact_string($cigar_3prime_unique),
+                'md'    => get_md_compact_string($md_3prime_unique),
+            },
+        
+        };
 }
 
 
@@ -753,8 +1049,8 @@ stats = matrix(data=c(\"",
         (map {$STAT_COLOR->{$_} or 0} @STAT_ORDER)),
          "\"), ncol=3, byrow=F)
 stats = subset(stats, stats[,2]>0);
-stats.fail = subset(stats, stats[,1]!='$STAT_OK_WILD_TYPE' & stats[,1]!='$STAT_OK_DELETION' & stats[,1]!='$STAT_OK_INSERTION')
-stats.ok = subset(stats, stats[,1]=='$STAT_OK_WILD_TYPE' | stats[,1]=='$STAT_OK_DELETION' | stats[,1]=='$STAT_OK_INSERTION')
+stats.fail = subset(stats, stats[,1]!='$STAT_OK_WILD_TYPE' & stats[,1]!='$STAT_OK_DELETION' & stats[,1]!='$STAT_OK_INSERTION' & stats[,1]!='$STAT_OK_COMPLEX')
+stats.ok = subset(stats, stats[,1]=='$STAT_OK_WILD_TYPE' | stats[,1]=='$STAT_OK_DELETION' | stats[,1]=='$STAT_OK_INSERTION' | stats[,1]=='$STAT_OK_COMPLEX')
 
 force.plots = $force_plots
 plot.pdf = $plot_pdf
@@ -788,6 +1084,7 @@ darken.color <- function(col, amount) {
 }
 col.del = '$COLOR_DELETION'
 col.ins = '$COLOR_INSERTION'
+col.com = '$COLOR_COMPLEX'
 dark.col.del = darken.color(col.del, 0.3);
 dark.col.ins = darken.color(col.ins, 0.3);
 
@@ -800,6 +1097,7 @@ dark.col.ins = darken.color(col.ins, 0.3);
 # =============================================================================
 data.del <- subset(data, event=='DEL', select=2:ncol(data))
 data.ins <- subset(data, event=='INS', select=2:ncol(data))
+data.com <- subset(data, event=='COM', select=2:ncol(data))
 
 
 # =============================================================================
@@ -814,13 +1112,15 @@ data.ins <- subset(data, event=='INS', select=2:ncol(data))
 num.wt = $wt
 num.del = dim(data.del)[1]
 num.ins = dim(data.ins)[1]
+num.com = dim(data.com)[1]
 num.nhej = num.del + num.ins
 num.total = num.wt + num.del + num.ins
 
 perc.wt = paste0(format(100*num.wt/num.total, digits=3),'%')
 perc.del = paste0(format(100*num.del/num.total, digits=3),'%')
 perc.ins = paste0(format(100*num.ins/num.total, digits=3),'%')
-perc.nhej = paste0(format(100*(num.ins+num.del)/num.total, digits=3),'%')
+perc.com = paste0(format(100*num.com/num.total, digits=3),'%')
+perc.nhej = paste0(format(100*(num.ins+num.del+num.com)/num.total, digits=3),'%')
 
 
 # =============================================================================
@@ -860,7 +1160,7 @@ plot.size.histograms <- function(data.del, data.ins) {
     ### Plot histogram for insertions only (if any)
     main=paste0('Histogram of Insertion sizes (', label, ')')
     if (num.ins > 0) {
-        plot(h.del\$counts, xlim=xlim, type='n', xlab=xlab.del, ylab=ylab, main=main)
+        plot(h.ins\$counts, xlim=xlim, type='n', xlab=xlab.del, ylab=ylab, main=main)
         rect(h.ins\$mids, 0, h.ins\$mids+1, h.ins\$counts, col=col.ins)
     } else if (force.plots) {
         plot(NA,xlim=c(-1,1), ylim=c(-1,1), axes=F, xlab=NA, ylab=NA, main=main)
@@ -1103,7 +1403,7 @@ plot.pie.chart <- function() {
     if ((sum(as.numeric(my.stats[,2])) > 0) | force.plots) {
         mtext('5\\'/3\\' mut and indels: Differences with the WT seq before the overlap', side=1, line=0)
         mtext('Reads differ: The reads differ on the overlap', side=1, line=1)
-        mtext('Other mismatches: Differences with the WT seq in the overlap or more than 1 indel', side=1, line=2)
+        mtext('Complex: Deletion and insertion in the same sequence (or other mutations)', side=1, line=2)
     }
     my.stats = stats.ok
     if (sum(as.numeric(my.stats[,2])) > 0) {
@@ -1117,6 +1417,7 @@ plot.pie.chart <- function() {
         mtext(paste0('NHEJ: n = ', num.nhej, '; ', perc.nhej), side=1, line=1, adj=0, at=-1.1)
         mtext(paste0('Deletions: n = ', num.del, '; ', perc.del), side=1, line=0, adj=0, at=0.1)
         mtext(paste0('Insertions: n = ', num.ins, '; ', perc.ins), side=1, line=1, adj=0, at=0.1)
+        mtext(paste0('Complex: n = ', num.com, '; ', perc.com), side=1, line=2, adj=0, at=0.1)
     }
 }
 
@@ -1151,6 +1452,8 @@ plot.figures <- function() {
 
     plot.pie.chart()
 ";
+
+
     if (@$top_sequences) {
         print R "   plot.topseqs(data.del)\n";
     }
@@ -1198,4 +1501,739 @@ if (plot.svg) {
     return($R_script);
 }
 
-=pod
+
+sub test_merge_reads {
+    my ($read1, $read2, $merged_read);
+
+    $read1 = {
+        'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 1,
+        'cigar' => "50M",
+        'md' => "MD:Z:50"};
+    $read2 = {
+        'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 31,
+        'cigar' => "50M",
+        'md' => "MD:Z:50"};
+    $merged_read = {
+            'merged' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 80,
+                'cigar' => "80M",
+                'md' => "MD:Z:80",
+            },
+            '5prime' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 30,
+                'cigar' => "30M",
+                'md' => "MD:Z:30",
+            },
+            'overlap' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIII",
+                'start' => 31,
+                'end' => 50,
+                'cigar' => "20M",
+                'md' => "MD:Z:20",
+            },
+            '3prime' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 51,
+                'end' => 80,
+                'cigar' => "30M",
+                'md' => "MD:Z:30",
+            },
+        };
+    is_deeply(merge_reads($read1, $read2), $merged_read, "merge_reads all matches");
+
+    $read1 = {
+        'seq' =>  "AAATTACCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 1,
+        'cigar' => "50M",
+        'md' => "MD:Z:5A44"};
+    $read2 = {
+        'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 31,
+        'cigar' => "50M",
+        'md' => "MD:Z:50"};
+    $merged_read = {
+            'merged' => {
+                'seq' =>  "AAATTACCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 80,
+                'cigar' => "80M",
+                'md' => "MD:Z:5A74",
+            },
+            '5prime' => {
+                'seq' =>  "AAATTACCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 30,
+                'cigar' => "30M",
+                'md' => "MD:Z:5A24",
+            },
+            'overlap' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIII",
+                'start' => 31,
+                'end' => 50,
+                'cigar' => "20M",
+                'md' => "MD:Z:20",
+            },
+            '3prime' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 51,
+                'end' => 80,
+                'cigar' => "30M",
+                'md' => "MD:Z:30",
+            },
+        };
+    is_deeply(merge_reads($read1, $read2), $merged_read, "merge_reads mismatch 5'");
+
+    $read1 = {
+        'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTACCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 1,
+        'cigar' => "50M",
+        'md' => "MD:Z:35A14"};
+    $read2 = {
+        'seq' =>  "AAATTACCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 31,
+        'cigar' => "50M",
+        'md' => "MD:Z:5A44"};
+    $merged_read = {
+            'merged' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTACCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 80,
+                'cigar' => "80M",
+                'md' => "MD:Z:35A44",
+            },
+            '5prime' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 30,
+                'cigar' => "30M",
+                'md' => "MD:Z:30",
+            },
+            'overlap' => {
+                'seq' =>  "AAATTACCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIII",
+                'start' => 31,
+                'end' => 50,
+                'cigar' => "20M",
+                'md' => "MD:Z:5A14",
+            },
+            '3prime' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 51,
+                'end' => 80,
+                'cigar' => "30M",
+                'md' => "MD:Z:30",
+            },
+        };
+    is_deeply(merge_reads($read1, $read2), $merged_read, "merge_reads mismatch overlap");
+
+    $read1 = {
+        'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTAACGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 1,
+        'cigar' => "50M",
+        'md' => "MD:Z:35A0A13"};
+    $read2 = {
+        'seq' =>  "AAATTAACGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 31,
+        'cigar' => "50M",
+        'md' => "MD:Z:5A0A43"};
+    $merged_read = {
+        'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTAACGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 1,
+        'end' => 80,
+        'cigar' => "80M",
+        'md' => "MD:Z:35A0A43"};
+    $merged_read = {
+            'merged' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTAACGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 80,
+                'cigar' => "80M",
+                'md' => "MD:Z:35A0A43",
+            },
+            '5prime' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 30,
+                'cigar' => "30M",
+                'md' => "MD:Z:30",
+            },
+            'overlap' => {
+                'seq' =>  "AAATTAACGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIII",
+                'start' => 31,
+                'end' => 50,
+                'cigar' => "20M",
+                'md' => "MD:Z:5A0A13",
+            },
+            '3prime' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 51,
+                'end' => 80,
+                'cigar' => "30M",
+                'md' => "MD:Z:30",
+            },
+        };
+    is_deeply(merge_reads($read1, $read2), $merged_read, "merge_reads 2bp mismatch in the overlap");
+
+    $read1 = {
+        'seq' =>  "AAATTCCCGGTAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 1,
+        'cigar' => "10M1I40M",
+        'md' => "MD:Z:50"};
+    $read2 = {
+        'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 31,
+        'cigar' => "50M",
+        'md' => "MD:Z:50"};
+    $merged_read = {
+        'seq' =>  "AAATTCCCGGTAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 1,
+        'end' => 80,
+        'cigar' => "10M1I70M",
+        'md' => "MD:Z:80"};
+    $merged_read = {
+            'merged' => {
+                'seq' =>  "AAATTCCCGGTAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 80,
+                'cigar' => "10M1I70M",
+                'md' => "MD:Z:80",
+            },
+            '5prime' => {
+                'seq' =>  "AAATTCCCGGTAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 30,
+                'cigar' => "10M1I20M",
+                'md' => "MD:Z:30",
+            },
+            'overlap' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIII",
+                'start' => 31,
+                'end' => 50,
+                'cigar' => "20M",
+                'md' => "MD:Z:20",
+            },
+            '3prime' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 51,
+                'end' => 80,
+                'cigar' => "30M",
+                'md' => "MD:Z:30",
+            },
+        };
+    is_deeply(merge_reads($read1, $read2), $merged_read, "merge_reads insertion 5'");
+
+    $read1 = {
+        'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGTAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 1,
+        'cigar' => "40M1I10M",
+        'md' => "MD:Z:50"};
+    $read2 = {
+        'seq' =>  "AAATTCCCGGTAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 31,
+        'cigar' => "10M1I40M",
+        'md' => "MD:Z:50"};
+    $merged_read = {
+            'merged' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGTAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 80,
+                'cigar' => "40M1I40M",
+                'md' => "MD:Z:80",
+            },
+            '5prime' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 30,
+                'cigar' => "30M",
+                'md' => "MD:Z:30",
+            },
+            'overlap' => {
+                'seq' =>  "AAATTCCCGGTAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIII",
+                'start' => 31,
+                'end' => 50,
+                'cigar' => "10M1I10M",
+                'md' => "MD:Z:20",
+            },
+            '3prime' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 51,
+                'end' => 80,
+                'cigar' => "30M",
+                'md' => "MD:Z:30",
+            },
+        };
+    is_deeply(merge_reads($read1, $read2), $merged_read, "merge_reads insertion 5'");
+
+    $read1 = {
+        'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGTAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 1,
+        'cigar' => "30M1I20M",
+        'md' => "MD:Z:50"};
+    $read2 = {
+        'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 31,
+        'cigar' => "50M",
+        'md' => "MD:Z:50"};
+    $merged_read = {
+            'merged' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGTAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 80,
+                'cigar' => "30M1I50M",
+                'md' => "MD:Z:80",
+            },
+            '5prime' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGT",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 30,
+                'cigar' => "30M1I",
+                'md' => "MD:Z:30",
+            },
+            'overlap' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIII",
+                'start' => 31,
+                'end' => 50,
+                'cigar' => "20M",
+                'md' => "MD:Z:20",
+            },
+            '3prime' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 51,
+                'end' => 80,
+                'cigar' => "30M",
+                'md' => "MD:Z:30",
+            },
+        };
+    is_deeply(merge_reads($read1, $read2), $merged_read, "merge_reads insertion just before overlap");
+
+    $read1 = {
+        'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGTAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 1,
+        'cigar' => "30M1I20M",
+        'md' => "MD:Z:50"};
+    $read2 = {
+        'seq' =>  "TAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 31,
+        'cigar' => "1I50M",
+        'md' => "MD:Z:50"};
+    $merged_read = {
+        'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGTAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 1,
+        'end' => 80,
+        'cigar' => "30M1I50M",
+        'md' => "MD:Z:80"};
+    $merged_read = {
+            'merged' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGTAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 80,
+                'cigar' => "30M1I50M",
+                'md' => "MD:Z:80",
+            },
+            '5prime' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 30,
+                'cigar' => "30M",
+                'md' => "MD:Z:30",
+            },
+            'overlap' => {
+                'seq' =>  "TAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIII",
+                'start' => 31,
+                'end' => 50,
+                'cigar' => "1I20M",
+                'md' => "MD:Z:20",
+            },
+            '3prime' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 51,
+                'end' => 80,
+                'cigar' => "30M",
+                'md' => "MD:Z:30",
+            },
+        };
+    is_deeply(merge_reads($read1, $read2), $merged_read, "merge_reads insertion as 1st bp overlap");
+
+    $read1 = {
+        'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGTTTAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 1,
+        'cigar' => "30M3I20M",
+        'md' => "MD:Z:50"};
+    $read2 = {
+        'seq' =>  "TTAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 31,
+        'cigar' => "2I50M",
+        'md' => "MD:Z:50"};
+    $merged_read = {
+            'merged' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGTTTAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 80,
+                'cigar' => "30M3I50M",
+                'md' => "MD:Z:80",
+            },
+            '5prime' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGT",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 30,
+                'cigar' => "30M1I",
+                'md' => "MD:Z:30",
+            },
+            'overlap' => {
+                'seq' =>  "TTAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIII",
+                'start' => 31,
+                'end' => 50,
+                'cigar' => "2I20M",
+                'md' => "MD:Z:20",
+            },
+            '3prime' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 51,
+                'end' => 80,
+                'cigar' => "30M",
+                'md' => "MD:Z:30",
+            },
+        };
+    is_deeply(merge_reads($read1, $read2), $merged_read, "merge_reads partial insertion at start of overlap");
+
+    $read1 = {
+        'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGTTT",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 1,
+        'cigar' => "30M3I",
+        'md' => "MD:Z:30"};
+    $read2 = {
+        'seq' =>  "TTAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 31,
+        'cigar' => "2I50M",
+        'md' => "MD:Z:50"};
+    $merged_read = {
+        'error' =>  $STAT_NO_OVERLAP};
+    is_deeply(merge_reads($read1, $read2), $merged_read, "merge_reads overlap on insertion only");
+
+    $read1 = {
+        'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGTT",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 1,
+        'cigar' => "30M2I",
+        'md' => "MD:Z:30"};
+    $read2 = {
+        'seq' =>  "CGGTTTAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 28,
+        'cigar' => "3M3I50M",
+        'md' => "MD:Z:53"};
+    $merged_read = {
+            'merged' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGTTTAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 80,
+                'cigar' => "30M3I50M",
+                'md' => "MD:Z:80",
+            },
+            '5prime' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCC",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 27,
+                'cigar' => "27M",
+                'md' => "MD:Z:27",
+            },
+            'overlap' => {
+                'seq' =>  "CGGTT",
+                'qual' => "IIIII",
+                'start' => 28,
+                'end' => 30,
+                'cigar' => "3M2I",
+                'md' => "MD:Z:3",
+            },
+            '3prime' => {
+                'seq' =>  "TAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 31,
+                'end' => 80,
+                'cigar' => "1I50M",
+                'md' => "MD:Z:50",
+            },
+        };
+    is_deeply(merge_reads($read1, $read2), $merged_read, "merge_reads partial insertion at end of overlap");
+
+    $read1 = {
+        'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGTTT",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 1,
+        'cigar' => "30M3I",
+        'md' => "MD:Z:30"};
+    $read2 = {
+        'seq' =>  "CGGTTTAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 28,
+        'cigar' => "3M3I50M",
+        'md' => "MD:Z:53"};
+    $merged_read = {
+            'merged' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGTTTAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 80,
+                'cigar' => "30M3I50M",
+                'md' => "MD:Z:80",
+            },
+            '5prime' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCC",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 27,
+                'cigar' => "27M",
+                'md' => "MD:Z:27",
+            },
+            'overlap' => {
+                'seq' =>  "CGGTTT",
+                'qual' => "IIIIII",
+                'start' => 28,
+                'end' => 30,
+                'cigar' => "3M3I",
+                'md' => "MD:Z:3",
+            },
+            '3prime' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 31,
+                'end' => 80,
+                'cigar' => "50M",
+                'md' => "MD:Z:50",
+            },
+        };
+    is_deeply(merge_reads($read1, $read2), $merged_read, "merge_reads partial insertion at end of overlap");
+
+
+    $read1 = {
+        'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGATAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 1,
+        'cigar' => "31M1I19M",
+        'md' => "MD:Z:50"};
+    $read2 = {
+        'seq' =>  "ATAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 31,
+        'cigar' => "1M1I49M",
+        'md' => "MD:Z:50"};
+    $merged_read = {
+        'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGATAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 1,
+        'end' => 80,
+        'cigar' => "31M1I49M",
+        'md' => "MD:Z:80"};
+    $merged_read = {
+            'merged' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGATAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 80,
+                'cigar' => "31M1I49M",
+                'md' => "MD:Z:80",
+            },
+            '5prime' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 30,
+                'cigar' => "30M",
+                'md' => "MD:Z:30",
+            },
+            'overlap' => {
+                'seq' =>  "ATAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIII",
+                'start' => 31,
+                'end' => 50,
+                'cigar' => "1M1I19M",
+                'md' => "MD:Z:20",
+            },
+            '3prime' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 51,
+                'end' => 80,
+                'cigar' => "30M",
+                'md' => "MD:Z:30",
+            },
+        };
+    is_deeply(merge_reads($read1, $read2), $merged_read, "merge_reads insertion in the overlap");
+
+    $read1 = {
+        'seq' =>  "AAATTCCCGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 1,
+        'cigar' => "9M1D40M",
+        'md' => "MD:Z:9^G40"};
+    $read2 = {
+        'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 31,
+        'cigar' => "50M",
+        'md' => "MD:Z:50"};
+    $merged_read = {
+        'seq' =>  "AAATTCCCGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 1,
+        'end' => 80,
+        'cigar' => "9M1D70M",
+        'md' => "MD:Z:9^G70"};
+    $merged_read = {
+            'merged' => {
+                'seq' =>  "AAATTCCCGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 80,
+                'cigar' => "9M1D70M",
+                'md' => "MD:Z:9^G70",
+            },
+            '5prime' => {
+                'seq' =>  "AAATTCCCGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 30,
+                'cigar' => "9M1D20M",
+                'md' => "MD:Z:9^G20",
+            },
+            'overlap' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIII",
+                'start' => 31,
+                'end' => 50,
+                'cigar' => "20M",
+                'md' => "MD:Z:20",
+            },
+            '3prime' => {
+                'seq' =>  "AAATTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 51,
+                'end' => 80,
+                'cigar' => "30M",
+                'md' => "MD:Z:30",
+            },
+        };
+    is_deeply(merge_reads($read1, $read2), $merged_read, "merge_reads deletion 5'");
+
+    $read1 = {
+        'seq' =>  "AAATTCCCGGBBBTTCCCGGDDDTTCCCTTCCCGGEEETTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 1,
+        'cigar' => "28M5D17M",
+        'md' => "MD:Z:28^GGAAA17"};
+    $read2 = {
+        'seq' =>  "TTCCCGGEEETTCCCGGFFFTTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 34,
+        'cigar' => "47M",
+        'md' => "MD:Z:47"};
+    $merged_read = {
+        'seq' =>  "AAATTCCCGGBBBTTCCCGGDDDTTCCCTTCCCGGEEETTCCCGGFFFTTCCCGGAAATTCCCGGAAATTCCCGG",
+        'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+        'start' => 1,
+        'end' => 80,
+        'cigar' => "28M5D47M",
+        'md' => "MD:Z:28^GGAAA47"};
+    $merged_read = {
+            'merged' => {
+                'seq' =>  "AAATTCCCGGBBBTTCCCGGDDDTTCCCTTCCCGGEEETTCCCGGFFFTTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 80,
+                'cigar' => "28M5D47M",
+                'md' => "MD:Z:28^GGAAA47",
+            },
+            '5prime' => {
+                'seq' =>  "AAATTCCCGGBBBTTCCCGGDDDTTCCC",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 1,
+                'end' => 33,
+                'cigar' => "28M5D",
+                'md' => "MD:Z:28^GGAAA",
+            },
+            'overlap' => {
+                'seq' =>  "TTCCCGGEEETTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIII",
+                'start' => 34,
+                'end' => 50,
+                'cigar' => "17M",
+                'md' => "MD:Z:17",
+            },
+            '3prime' => {
+                'seq' =>  "FFFTTCCCGGAAATTCCCGGAAATTCCCGG",
+                'qual' => "IIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+                'start' => 51,
+                'end' => 80,
+                'cigar' => "30M",
+                'md' => "MD:Z:30",
+            },
+        };
+    is_deeply(merge_reads($read1, $read2), $merged_read, "merge_reads deletion before overlap");
+
+}
