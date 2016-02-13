@@ -361,9 +361,18 @@ sub get_top_sequences {
             substr($ref_seq, $guide_start+length($guide_seq)) = lc(substr($ref_seq, $guide_start+length($guide_seq)));
             print $ref_seq,"\n";
         } else {
-            print STDERR "======================================================================\n";
-            print STDERR "WARNING: guide sequence ('$guide_seq') not found in amplicon sequence\n";
-            print STDERR "======================================================================\n";
+            my $revcom_guide_seq = revcom($guide_seq);
+            $guide_start = index($ref_seq, $revcom_guide_seq);
+            if ($guide_start >= 0) {
+                substr($ref_seq, 0, $guide_start) = lc(substr($ref_seq, 0, $guide_start));
+                substr($ref_seq, $guide_start+length($guide_seq)) = lc(substr($ref_seq, $guide_start+length($guide_seq)));
+                print $ref_seq,"\n";
+            } else {
+                print STDERR "======================================================================\n";
+                print STDERR "WARNING: guide sequence ('$guide_seq') not found in amplicon sequence\n";
+                print STDERR "WARNING: guide sequence ('$revcom_guide_seq') not found in amplicon sequence\n";
+                print STDERR "======================================================================\n";
+            }
         }
     }
 
@@ -692,6 +701,14 @@ sub parse_bam_file {
 }
 
 
+sub revcom {
+    my ($seq) = @_;
+    $seq = reverse($seq);
+    $seq =~ tr/ACTG/TGAC/;
+    return $seq;
+}
+
+
 =head2 write_R_script
 
   Arg[1]        : string $label
@@ -718,6 +735,8 @@ sub write_R_script {
     $R_script =~ s/.data.txt$/.R/;
 
     my $wt = ($stats->{$STAT_OK_WILD_TYPE} or 0);
+
+    my $revcom_guide_seq = revcom($guide_seq);
 
     open(R, ">$R_script") or die;
     print R "
@@ -747,7 +766,11 @@ plot.svg = $plot_svg
 # =============================================================================
 ref.seq = '$ref_seq'
 guide.seq = '$guide_seq'
+guide.seq.revcom = '$revcom_guide_seq'
 guide.start = regexpr(guide.seq, ref.seq, fixed=T)[1];
+if (guide.start == -1) {
+    guide.start = regexpr(guide.seq.revcom, ref.seq, fixed=T)[1];
+}
 guide.length = nchar(guide.seq)
 
 label = '$label'
