@@ -404,50 +404,78 @@ sub get_top_sequences {
     my $min_from;
     my $max_to;
     my $longest_seq = 0;
+    # Include the guide sequence if available
+    if ($guide_start) {
+        $min_from = $guide_start + 1;
+        $max_to = $guide_start + length($guide_seq);
+    }
+    # Expand as necessary to cover all deletion and complex cases
     foreach my $this_line (@del_lines, @com_lines) {
         my ($num, $del_length, $from, $seq) = $this_line =~ /(\d+)\s(\-?\d+)\s(\d+)\s(\w+)/;
         $min_from = $from if (!$min_from or $from < $min_from);
         $max_to = $from+$del_length if (!$max_to or $from+$del_length > $max_to);
         $longest_seq = length($seq) if ($longest_seq < length($seq));
     }
+    # Same for insertions (except that insertions are of length 0 in ref coordinates)
     foreach my $this_line (@ins_lines) {
         my ($num, $ins_length, $from, $seq) = $this_line =~ /(\d+)\s(\-?\d+)\s(\d+)\s(\w+)/;
-        $min_from = $from-1 if (!$min_from or $from-1 < $min_from);
+        $min_from = $from - 1 if (!$min_from or $from - 1 < $min_from);
         $max_to = $from if (!$max_to or $from > $max_to);
-        $longest_seq = length($seq)+2 if ($longest_seq < length($seq)+2);
+        $longest_seq = length($seq) + 2 if ($longest_seq < length($seq) + 2);
     }
+    # Just in case there are no guide sequence nor deletions nor insertions
     if (!defined($max_to)) {
-        # i.e. no deletions nor insertions
-        $max_to = int(length($ref_seq)/2)+10;
-        $min_from = $max_to-10;
+        $max_to = int(length($ref_seq) / 2) + 10;
+        $min_from = $max_to - 10;
     }
-    $min_from -= 21;
-    $min_from = 0 if ($min_from < 0);
+    # Expand the sequence a little further to give more context
+    $min_from -= 20;
+    $min_from = 1 if ($min_from < 1);
     $max_to += 19;
+
 
     ## ------------------------------------------------------------------------------
     ## Sets the output format (using whitespaces to be nicely printed in R afterewards)
     ## ------------------------------------------------------------------------------
-    my $format = "\%-".($max_to-$min_from)."s \%7s  \%-4s \%3s \%6s \%-${longest_seq}s";
+    my $format = "\%-".($max_to - $min_from + 1)."s \%7s  \%-4s \%3s \%6s \%-${longest_seq}s";
 
 
     ## ------------------------------------------------------------------------------
     ## Header and WT sequence
     ## ------------------------------------------------------------------------------
     my $header = sprintf($format, "Sequence" , "Num", "TYPE", "L", "POS", "Diff");
-    my $wt_sequence = sprintf($format, substr($ref_seq, $min_from, $max_to-$min_from), $wt, "WT", 0, "NA", "");
+    my $wt_sequence = sprintf($format, substr($ref_seq, $min_from - 1, $max_to - $min_from), $wt, "WT", 0, "NA", "");
     $top_sequences = [$header, "", $wt_sequence, ""];
 
 
     ## ------------------------------------------------------------------------------
     ## Most common deletions
     ## ------------------------------------------------------------------------------
-    my @del_sequences;
+    my $del_sequences_hash = {};
     foreach my $this_line (@del_lines) {
         my ($num, $del_length, $from, $seq) = $this_line =~ /(\d+)\s(\-?\d+)\s(\d+)\s(\w+)/;
-        my $aligned_seq = substr($ref_seq, $min_from, $from-$min_from-1) . '-'x$del_length . substr($ref_seq, ($from+$del_length-1), $max_to - ($from+$del_length-1));
-        push(@del_sequences, sprintf($format, $aligned_seq, $num, "DEL", $del_length, $from, $seq));
+        my $aligned_seq = substr($ref_seq, ($min_from - 1), ($from - $min_from)) .
+                          '-' x $del_length .
+                          substr($ref_seq, ($from + $del_length - 1), $max_to - ($from + $del_length - 1));
+        my $resulting_seq = substr($ref_seq, ($min_from - 1), ($from - $min_from)) .
+                            substr($ref_seq, ($from + $del_length - 1), $max_to - ($from + $del_length - 1));
+        if ($del_sequences_hash->{$resulting_seq}) {
+            $del_sequences_hash->{$resulting_seq}->{num} += $num;
+        } else {
+            $del_sequences_hash->{$resulting_seq}->{aligned_seq} = $aligned_seq;
+            $del_sequences_hash->{$resulting_seq}->{num} = $num;
+            $del_sequences_hash->{$resulting_seq}->{del_length} = $del_length;
+            $del_sequences_hash->{$resulting_seq}->{from} = $from;
+            $del_sequences_hash->{$resulting_seq}->{seq} = $seq;
+        }
     }
+    my @del_sequences = map {
+            sprintf($format, $del_sequences_hash->{$_}->{aligned_seq}, $del_sequences_hash->{$_}->{num},
+                    "DEL", $del_sequences_hash->{$_}->{del_length}, $del_sequences_hash->{$_}->{from},
+                    ">".$del_sequences_hash->{$_}->{seq}."<")
+            } (sort {$del_sequences_hash->{$b}->{num} <=> $del_sequences_hash->{$a}->{num} ||
+                     $del_sequences_hash->{$a}->{del_length} <=> $del_sequences_hash->{$b}->{del_length}
+                    } keys $del_sequences_hash);
     my $deletions_file = $data_file;
     $deletions_file =~ s/\.txt$/.del.txt/;
     open(DEL, ">$deletions_file") or die;
@@ -465,13 +493,30 @@ sub get_top_sequences {
     ## ------------------------------------------------------------------------------
     ## Most common insertions
     ## ------------------------------------------------------------------------------
-    my @ins_sequences;
+    my $ins_sequences_hash = {};
     foreach my $this_line (@ins_lines) {
         my ($num, $ins_length, $from, $seq) = $this_line =~ /(\d+)\s(\-?\d+)\s(\d+)\s(\w+)/;
-        my $aligned_seq = substr($ref_seq, $min_from, $max_to-$min_from);
-        substr($aligned_seq, $from-$min_from-2, 2, "><");
-        push(@ins_sequences, sprintf($format, $aligned_seq, $num, "INS", $ins_length, $from, ">$seq<"));
+        my $aligned_seq = substr($ref_seq, $min_from - 1, $max_to - $min_from + 1);
+        substr($aligned_seq, $from - $min_from - 1, 2, "><");
+        my $resulting_seq = substr($ref_seq, $min_from - 1, $max_to - $min_from + 1);
+        substr($resulting_seq, $from - $min_from, 0, $seq);
+        if ($ins_sequences_hash->{$resulting_seq}) {
+            $ins_sequences_hash->{$resulting_seq}->{num} += $num;
+        } else {
+            $ins_sequences_hash->{$resulting_seq}->{aligned_seq} = $aligned_seq;
+            $ins_sequences_hash->{$resulting_seq}->{num} = $num;
+            $ins_sequences_hash->{$resulting_seq}->{ins_length} = $ins_length;
+            $ins_sequences_hash->{$resulting_seq}->{from} = $from;
+            $ins_sequences_hash->{$resulting_seq}->{seq} = $seq;
+        }
     }
+    my @ins_sequences = map {
+            sprintf($format, $ins_sequences_hash->{$_}->{aligned_seq}, $ins_sequences_hash->{$_}->{num},
+                    "INS", $ins_sequences_hash->{$_}->{ins_length}, $ins_sequences_hash->{$_}->{from},
+                    ">".$ins_sequences_hash->{$_}->{seq}."<")
+            } (sort {$ins_sequences_hash->{$b}->{num} <=> $ins_sequences_hash->{$a}->{num} ||
+                     $ins_sequences_hash->{$a}->{ins_length} <=> $ins_sequences_hash->{$b}->{ins_length}
+                    } keys $ins_sequences_hash);
     my $insertions_file = $data_file;
     $insertions_file =~ s/\.txt$/.ins.txt/;
     open(INS, ">$insertions_file") or die;
@@ -488,13 +533,36 @@ sub get_top_sequences {
     ## ------------------------------------------------------------------------------
     ## Most common complex cases
     ## ------------------------------------------------------------------------------
-    my @com_sequences;
+    my $com_sequences_hash = {};
     foreach my $this_line (@com_lines) {
         my ($num, $com_length, $from, $seq) = $this_line =~ /(\d+)\s(\-?\d+)\s(\d+)\s(\w+)/;
-        my $aligned_seq = substr($ref_seq, $min_from, $max_to-$min_from);
-        substr($aligned_seq, $from-$min_from-1, $com_length+2, ">".("-"x($com_length))."<");
-        push(@com_sequences, sprintf($format, $aligned_seq, $num, "COM", $com_length, $from, ">$seq<"));
+        my $aligned_seq = substr($ref_seq, $min_from - 1, $max_to - $min_from + 1);
+        substr($aligned_seq, $from - $min_from - 1, $com_length + 2, ">" . ("-" x $com_length) . "<");
+        my $resulting_seq = substr($ref_seq, $min_from - 1, $max_to - $min_from + 1);
+        substr($resulting_seq, $from - $min_from, $com_length, $seq);
+        if ($com_sequences_hash->{$resulting_seq}) {
+            $com_sequences_hash->{$resulting_seq}->{num} += $num;
+        } else {
+            $com_sequences_hash->{$resulting_seq}->{aligned_seq} = $aligned_seq;
+            $com_sequences_hash->{$resulting_seq}->{num} = $num;
+            $com_sequences_hash->{$resulting_seq}->{com_length} = $com_length;
+            $com_sequences_hash->{$resulting_seq}->{from} = $from;
+            $com_sequences_hash->{$resulting_seq}->{seq} = $seq;
+        }
     }
+    my @com_sequences = map {
+            sprintf($format, $com_sequences_hash->{$_}->{aligned_seq}, $com_sequences_hash->{$_}->{num},
+                    "COM", $com_sequences_hash->{$_}->{com_length}, $com_sequences_hash->{$_}->{from},
+                    ">".$com_sequences_hash->{$_}->{seq}."<")
+            } (sort {$com_sequences_hash->{$b}->{num} <=> $com_sequences_hash->{$a}->{num} ||
+                     $com_sequences_hash->{$a}->{com_length} <=> $com_sequences_hash->{$b}->{com_length}
+                    } keys $com_sequences_hash);
+
+    my $complex_file = $data_file;
+    $complex_file =~ s/\.txt$/.com.txt/;
+    open(COM, ">$complex_file") or die;
+    print COM join("\n", $header, $wt_sequence, "", @com_sequences, "");
+    close(COM);
     push(@$top_sequences, splice(@com_sequences, 0, 18));
 
     # Print this on the standard output
