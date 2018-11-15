@@ -1182,14 +1182,14 @@ num.wt = $wt
 num.del = dim(data.del)[1]
 num.ins = dim(data.ins)[1]
 num.com = dim(data.com)[1]
-num.nhej = num.del + num.ins
-num.total = num.wt + num.del + num.ins
+num.nhej = num.del + num.ins + num.com
+num.total = num.wt + num.del + num.ins + num.com
 
 perc.wt = paste0(format(100*num.wt/num.total, digits=3),'%')
 perc.del = paste0(format(100*num.del/num.total, digits=3),'%')
 perc.ins = paste0(format(100*num.ins/num.total, digits=3),'%')
 perc.com = paste0(format(100*num.com/num.total, digits=3),'%')
-perc.nhej = paste0(format(100*(num.ins+num.del+num.com)/num.total, digits=3),'%')
+perc.nhej = paste0(format(100*(num.nhej)/num.total, digits=3),'%')
 
 
 # =============================================================================
